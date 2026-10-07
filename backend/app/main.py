@@ -93,7 +93,7 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
             doc.parser=parsed.parser; doc.parse_confidence=parsed.confidence
             doc.extracted_text=parsed.plain_text; doc.parse_json=parsed.to_json(); doc.parse_status="parsed"
             db.commit()
-            combined.append(f"### {doc.filename}\n{parsed.plain_text}")
+            combined.append(parsed.extraction_text(doc.filename))
             add_step(db,run,f"parse:{doc.filename}","success",
                      {"document_id":doc.id},{"parser":parsed.parser,"blocks":len(parsed.blocks),"confidence":parsed.confidence},
                      parsed.warnings,int((time.perf_counter()-started)*1000))
@@ -177,11 +177,20 @@ def reference_rates(db:Session=Depends(get_db)):
 @app.post("/api/deals/{deal_id}/calculate")
 def calculate_deal(deal_id:int,req:CalculationRequest,db:Session=Depends(get_db)):
     if not db.get(Deal,deal_id): raise HTTPException(404,"Deal not found")
+    run=PipelineRun(deal_id=deal_id); db.add(run); db.commit(); db.refresh(run)
+    started=time.perf_counter()
     result=calculate(req)
     calc=Calculation(deal_id=deal_id,input_json=req.model_dump_json(),
                      output_json=result.model_dump_json(),decision=result.decision)
     db.add(calc)
     deal=db.get(Deal,deal_id); deal.status="calculated"; db.commit(); db.refresh(calc)
+    add_step(
+        db,run,"deterministic_calculation","success",
+        req.model_dump(),
+        {"calculation_id":calc.id,**result.model_dump()},
+        duration_ms=int((time.perf_counter()-started)*1000),
+    )
+    run.status="success"; run.finished_at=datetime.utcnow(); db.commit()
     return {"calculation_id":calc.id,**result.model_dump()}
 
 @app.get("/api/deals/{deal_id}/calculations")
