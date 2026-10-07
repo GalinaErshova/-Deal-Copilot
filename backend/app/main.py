@@ -70,6 +70,7 @@ def public_settings():
         "calculation_defaults": settings.calculation_defaults,
         "accepted_upload_extensions": settings.parsed_upload_extensions,
         "demo_mode": settings.is_demo_mode,
+        "llm_provider": settings.llm_provider,
         "display_locale": settings.display_locale,
         "currency_code": settings.currency_code,
         "currency_unit_symbol": settings.currency_unit_symbol,

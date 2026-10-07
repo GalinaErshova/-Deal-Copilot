@@ -11,7 +11,7 @@ type Step={name:string;status:string;duration_ms?:number;input?:unknown;output?:
 type Run={id:number;status:string;steps:Step[]};
 type Calc={calculation_id:number;labor_hours_month:number;fte:number;physical_staff:number;revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
-type AppSettings={calculation_defaults:CalculationForm;accepted_upload_extensions:string[];demo_mode:boolean;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
+type AppSettings={calculation_defaults:CalculationForm;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
 const fmt=(n:number,locale:string,digits:number)=>new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(n);
 const money=(n:number,locale:string,currency:string,digits:number)=>new Intl.NumberFormat(locale,{style:"currency",currency,maximumFractionDigits:digits}).format(n);
@@ -119,49 +119,74 @@ export default function Home(){
   }
 
   const tabs=[
-    ["upload","Новая сделка"],["documents","Документы"],["review","Требования"],
-    ["workforce","Трудоёмкость"],["economics","Экономика"],["decision","Решение"],["pipeline","Контроль"]
+    {key:"upload",label:"Новая сделка",title:"Рабочее пространство",description:"Создайте сделку и загрузите тендерные материалы."},
+    {key:"documents",label:"Документы",title:"Документы",description:"Сопоставьте оригинал файла с результатом разбора."},
+    {key:"review",label:"Требования",title:"Проверка требований",description:"Проверьте извлечённые значения и подтвердите исходные данные."},
+    {key:"workforce",label:"Трудоёмкость",title:"Расчёт трудоёмкости",description:"Настройте параметры объекта и проверьте потребность в персонале."},
+    {key:"economics",label:"Экономика",title:"Экономика контракта",description:"Оцените себестоимость, маржу и чувствительность к тарифу."},
+    {key:"decision",label:"Решение",title:"Коммерческое решение",description:"Посмотрите итог BID / BID WITH CONDITIONS / NO BID."},
+    {key:"pipeline",label:"Контроль",title:"Контроль обработки",description:"Проверьте входы, результаты и предупреждения каждого этапа."},
   ];
+  const currentTab=tabs.find(tab=>tab.key===active)??tabs[0];
   const confirmed=fields.filter(x=>x.confirmed).length;
   const areaField=fields.find(x=>x.key==="area_m2");
   const criticalReady=Boolean(areaField?.confirmed && areaField.value && form);
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
 
-  return <main>
-    <header className="top">
-      <div><span className="brand">Deal Copilot</span><span className="badge">MVP 0–3</span></div>
-      <div className="muted">{deal?("Сделка #"+deal.id+" · "+deal.status):"Сделка не создана"}</div>
-    </header>
-
-    {appSettings?.demo_mode&&<div className="warning">Демо-режим: извлечение использует настроенную заглушку модели, а результаты нужно сверять с документами.</div>}
-
-    <section className="hero">
-      <div>
-        <p className="eyebrow">AI читает документы · алгоритм считает деньги</p>
-        <h1>Коммерческий расчёт под полным пошаговым контролем</h1>
-        <p>Демо B2B-клининга: от тендерных файлов до трудоёмкости, маржи и решения BID / NO BID.</p>
+  return <div className="appShell">
+    <aside className="sidebar">
+      <div className="sidebarBrand">
+        <div className="brandMark" aria-hidden="true">DC</div>
+        <div><span className="brand">Deal Copilot</span><span className="badge">MVP 0–3</span></div>
       </div>
-      <div className="heroStats">
+
+      <section className="sidebarDeal" aria-label="Текущая сделка">
+        <span className="sidebarLabel">АКТИВНАЯ СДЕЛКА</span>
+        <strong>{deal?("Сделка #"+deal.id):"Сделка не создана"}</strong>
+        <span className={"dealStatus "+(deal?"online":"idle")}><i/> {deal?deal.status:"Создайте сделку, чтобы начать"}</span>
+      </section>
+
+      <section className="sidebarStats" aria-label="Сводка по сделке">
         <div><b>{docs.length}</b><span>документов</span></div>
         <div><b>{fields.length}</b><span>параметров</span></div>
         <div><b>{confirmed}</b><span>подтверждено</span></div>
-      </div>
-    </section>
+      </section>
 
-    {error&&<div className="error">{error}</div>}
+      <nav className="sideNav" aria-label="Рабочие разделы">
+        <span className="sidebarLabel">РАБОЧИЙ ПРОЦЕСС</span>
+        {tabs.map((tab,index)=><button key={tab.key} className={active===tab.key?"active":""} aria-current={active===tab.key?"page":undefined} onClick={()=>setActive(tab.key)}>
+          <span className="navIndex">{String(index+1).padStart(2,"0")}</span><span>{tab.label}</span><span className="navArrow" aria-hidden="true">→</span>
+        </button>)}
+      </nav>
 
-    <nav className="tabs">
-      {tabs.map(function(t){return <button key={t[0]} className={active===t[0]?"active":""} onClick={()=>setActive(t[0])}>{t[1]}</button>})}
-    </nav>
+      <footer className="sidebarFooter">
+        <span className={"modeDot "+(appSettings?.demo_mode?"demo":"live")}/>
+        <span>{appSettings?.demo_mode?"Тестовый режим":appSettings?.llm_provider==="local"?"MiMo · локально":"MiMo · API"}</span>
+      </footer>
+    </aside>
 
+    <main className="workspace">
+      <header className="workspaceHeader">
+        <div>
+          <p className="workspaceEyebrow">DEAL COPILOT <span>/</span> {deal?("СДЕЛКА #"+deal.id):"НОВЫЙ ПРОЕКТ"}</p>
+          <h1>{currentTab.title}</h1>
+          <p>{currentTab.description}</p>
+        </div>
+        <div className="workspaceStep"><span>ШАГ</span><b>{String(tabs.findIndex(tab=>tab.key===active)+1).padStart(2,"0")}</b><i>/</i><span>{String(tabs.length).padStart(2,"0")}</span></div>
+      </header>
+
+      {appSettings?.demo_mode&&<div className="demoNotice"><span className="noticeIcon">i</span><span>Тестовый режим: извлечение использует заглушку, сверяйте требования с документами.</span></div>}
+      {error&&<div className="error" role="alert">{error}</div>}
+
+      <div className="workspaceContent">
     {active==="upload"&&<section className="panel two">
       <div>
-        <h2>1. Создать демо-сделку</h2>
+        <h2><span className="panelStep">01</span>Создать сделку</h2>
         <p className="muted">Одна компания, один пользователь. Для MVP этого достаточно.</p>
         <button className="primary" disabled={busy} onClick={createDeal}>{deal?"Создать новую сделку":"Создать сделку"}</button>
       </div>
       <div>
-        <h2>2. Загрузить документы</h2>
+        <h2><span className="panelStep">02</span>Загрузить документы</h2>
         <label className={"drop "+(!deal?"disabled":"")}>
           <input type="file" multiple accept={appSettings?.accepted_upload_extensions.join(",")} disabled={!deal||busy||!appSettings} onChange={e=>upload(e.target.files)}/>
           <b>{appSettings?.accepted_upload_extensions.map((ext)=>ext.replace(".","").toUpperCase()).join(" · ")}</b><span>выберите один или несколько файлов</span>
@@ -261,5 +286,7 @@ export default function Home(){
       <p className="muted">Для каждого шага доступны вход, выход, длительность и предупреждения.</p>
       {runs.length===0?<div className="empty">Пока нет запусков.</div>:runs.map(run=><div className="run" key={run.id}><h3>{"Запуск #"+run.id+" · "+run.status}</h3>{run.steps.map((s,i)=><details className={"step "+s.status} key={i}><summary><span>{(s.status==="success"?"✓":s.status==="failed"?"✕":"○")+" "+s.name}</span><small>{s.duration_ms?String(s.duration_ms)+" ms":""}</small></summary><div className="stepBody">{s.warnings?.map(w=><p className="warning" key={w}>{w}</p>)}<div className="json"><b>Вход</b><pre>{JSON.stringify(s.input,null,2)}</pre></div><div className="json"><b>Выход</b><pre>{JSON.stringify(s.output,null,2)}</pre></div></div></details>)}</div>)}
     </section>}
-  </main>
+      </div>
+    </main>
+  </div>
 }

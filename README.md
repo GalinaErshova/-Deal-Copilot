@@ -85,3 +85,32 @@ Never commit API keys. `.env` is ignored. Only placeholders belong in `.env.exam
 The Model Gateway isolates business code from a specific LLM provider. MiMo is the first provider, not a hard dependency of extraction/business logic.
 
 The document review approach is intentionally based on the Ask-Learn UX: source document on the left, parsed/structured representation on the right, with traceability at every later step.
+
+# Локальная MiMo для теста
+
+Для локальной проверки можно использовать community-конверсию Xiaomi MiMo-7B-RL
+в GGUF Q4_K_M. Оригинальный API-ключ MiMo в `backend/.env` менять не нужно:
+локальный режим обращается к `127.0.0.1` и использует отдельный локальный
+провайдер.
+
+1. Скачайте CPU-сборку `llama.cpp` из [официальных релизов](https://github.com/ggml-org/llama.cpp/releases)
+   и поместите `llama-server.exe` и DLL в `./.local-model/runtime/`.
+2. Скачайте [MiMo-7B-RL-Q4_K_M.gguf](https://huggingface.co/jedisct1/MiMo-7B-RL-GGUF)
+   в `./.local-model/` (файл около 4,68 ГБ).
+3. Запустите сервер: `./scripts/start-local-mimo.ps1`.
+4. В отдельном окне PowerShell задайте параметры только для текущего процесса и
+   запустите backend:
+
+   ```powershell
+   $env:LLM_PROVIDER = "local"
+   $env:DEMO_MODE = "false"
+   $env:MIMO_BASE_URL = "http://127.0.0.1:8080/v1"
+   $env:LLM_DEFAULT_MODEL = "mimo-7b-rl-q4_k_m"
+   $env:LLM_COMPLEX_MODEL = "mimo-7b-rl-q4_k_m"
+   cd backend
+   uvicorn app.main:app --reload
+   ```
+
+Файлы модели и рантайма хранятся в `.local-model/`, исключённой из Git.
+Q4 — экспериментальная 4-битная конверсия; перед использованием извлечённые
+значения и цитаты необходимо сверять с исходными документами.

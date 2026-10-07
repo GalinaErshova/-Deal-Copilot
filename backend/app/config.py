@@ -129,7 +129,7 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
             raise ValueError("Sensitivity bar width settings are invalid")
         if any(delta <= -1 for delta in self.parsed_sensitivity_deltas):
             raise ValueError("Sensitivity deltas must be greater than -1")
-        if self.llm_provider not in {"mimo", "mock"}:
+        if self.llm_provider not in {"mimo", "local", "mock"}:
             raise ValueError("llm_provider must be one of the configured providers")
         try:
             mock_payload = json.loads(self.mock_extraction_payload)
@@ -191,7 +191,8 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
 
     @property
     def is_demo_mode(self) -> bool:
-        return self.demo_mode or self.llm_provider == "mock" or not self.mimo_api_key
+        missing_cloud_key = self.llm_provider == "mimo" and not self.mimo_api_key
+        return self.demo_mode or self.llm_provider == "mock" or missing_cloud_key
 
     def ensure_dirs(self) -> None:
         Path(self.upload_dir).mkdir(parents=True, exist_ok=True)

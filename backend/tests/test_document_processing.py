@@ -61,3 +61,9 @@ def test_field_source_requires_matching_path_and_verbatim_fragment():
     assert _field_source_is_valid(verified, document)
     assert not _field_source_is_valid(fabricated_quote, document)
     assert not _field_source_is_valid(wrong_location, document)
+
+
+def test_field_evidence_normalizes_numeric_model_values():
+    field = FieldEvidence(key="area_m2", label="Площадь", value=1200, unit="м²")
+
+    assert field.value == "1200"

@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class FieldEvidence(BaseModel):
@@ -13,6 +13,14 @@ class FieldEvidence(BaseModel):
     source_location: str | None = None
     source_fragment: str | None = None
     status: str = "extracted"
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def normalize_numeric_value(cls, value):
+        # Модели часто возвращают числа как JSON number, а в UI значение хранится строкой.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        return value
 
 class DealExtraction(BaseModel):
     fields: list[FieldEvidence] = Field(default_factory=list)

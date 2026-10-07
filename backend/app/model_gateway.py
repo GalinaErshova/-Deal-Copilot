@@ -13,15 +13,19 @@ class ModelProvider(ABC):
         raise NotImplementedError
 
 class MiMoProvider(ModelProvider):
-    def __init__(self) -> None:
-        self.client = OpenAI(api_key=settings.mimo_api_key, base_url=settings.mimo_base_url)
+    def __init__(self, api_key: str | None = None) -> None:
+        self.client = OpenAI(api_key=api_key or settings.mimo_api_key, base_url=settings.mimo_base_url)
 
     def structured(self, *, model: str, system: str, user: str, schema: type[BaseModel]) -> BaseModel:
-        # MiMo is OpenAI-protocol compatible. We request strict JSON and validate locally.
+        # Локальному llama.cpp передаём JSON Schema, чтобы ограничить форму ответа.
+        response_format = {"type": "json_object"}
+        if settings.llm_provider == "local":
+            response_format["schema"] = schema.model_json_schema()
+
         completion = self.client.chat.completions.create(
             model=model,
             messages=[{"role":"system","content":system},{"role":"user","content":user}],
-            response_format={"type":"json_object"},
+            response_format=response_format,
         )
         content = completion.choices[0].message.content or "{}"
         return schema.model_validate(json.loads(content))
@@ -37,6 +41,9 @@ class ModelGateway:
             self.provider: ModelProvider = MockProvider()
         elif settings.llm_provider == "mimo":
             self.provider = MiMoProvider()
+        elif settings.llm_provider == "local":
+            # Локальный llama.cpp endpoint не использует облачный API-ключ.
+            self.provider = MiMoProvider(api_key="local")
         else:
             raise ValueError(f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
 
