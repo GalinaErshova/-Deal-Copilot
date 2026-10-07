@@ -77,6 +77,155 @@ def test_xlsx_parser_obeys_configured_row_limit():
     assert parsed.warnings
 
 
+def test_xlsx_table_text_labels_values_by_column_without_pipe_separators():
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["Показатель", "Значение"])
+    sheet.append(["Площадь", "8426,7 м²"])
+    binary = BytesIO()
+    workbook.save(binary)
+
+    from app.document_processing import parse_xlsx
+
+    parsed = parse_xlsx(binary.getvalue(), max_rows=10)
+
+    assert parsed.blocks[0].text == "Строка 2: Показатель: Площадь; Значение: 8426,7 м²"
+    assert " | " not in parsed.blocks[0].text
+    assert parsed.blocks[0].rows == [["Показатель", "Значение"], ["Площадь", "8426,7 м²"]]
+    assert parsed.warnings and "первая строка принята" in parsed.warnings[0]
+
+    table_requirement = FieldEvidence(
+        key="area_m2", label="Площадь", value="8426,7", unit="м²",
+        source_location="/sheet/1", source_fragment="Значение: 8426,7 м²",
+    )
+    assert _field_source_is_valid(table_requirement, {"blocks": [
+        {"path": parsed.blocks[0].path, "text": parsed.blocks[0].text}
+    ]})
+
+
+def test_docx_table_text_labels_values_and_keeps_structured_rows():
+    from docx import Document
+
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Показатель"
+    table.cell(0, 1).text = "Значение"
+    table.cell(1, 0).text = "График"
+    table.cell(1, 1).text = "Ежедневно"
+    binary = BytesIO()
+    document.save(binary)
+
+    from app.document_processing import parse_docx
+
+    parsed = parse_docx(binary.getvalue())
+
+    assert parsed.blocks[0].text == "Строка 2: Показатель: График; Значение: Ежедневно"
+    assert parsed.blocks[0].rows == [["Показатель", "Значение"], ["График", "Ежедневно"]]
+    assert parsed.warnings and "первая строка принята" in parsed.warnings[0]
+
+
+def test_markdown_tables_are_structured_and_text_does_not_use_pipe_delimiters():
+    from app.document_processing import parse_document
+
+    parsed = parse_document(
+        "requirements.md", "text/markdown",
+        "| Параметр | Значение |\n| --- | --- |\n| Площадь | 1200 м² |".encode(), 100,
+    )
+
+    table = next(block for block in parsed.blocks if block.kind == "table")
+    assert table.rows == [["Параметр", "Значение"], ["Площадь", "1200 м²"]]
+    assert "Параметр: Площадь" in table.text
+    assert " | " not in table.text
+
+
+def test_html_parser_ignores_script_and_extracts_tables():
+    from app.document_processing import parse_document
+
+    parsed = parse_document(
+        "requirements.html", "text/html",
+        b"<h1>Requirements</h1><script>alert(1)</script><table><tr><th>Field</th><th>Value</th></tr><tr><td>Area</td><td>1200</td></tr></table>",
+        100,
+    )
+
+    assert "Requirements" in parsed.plain_text
+    assert "alert" not in parsed.plain_text
+    table = next(block for block in parsed.blocks if block.kind == "table")
+    assert table.rows == [["Field", "Value"], ["Area", "1200"]]
+
+
+def test_rtf_parser_preserves_cyrillic_paragraphs():
+    from app.document_processing import parse_document
+
+    parsed = parse_document("requirements.rtf", "application/rtf", "{\\rtf1\\ansi\\ansicpg1251 Требование\\par}".encode("cp1251"), 100)
+
+    assert parsed.parser == "rtf"
+    assert any("Требование" in block.text for block in parsed.blocks)
+
+
+def test_mht_parser_extracts_html_part():
+    from email.message import EmailMessage
+
+    from app.document_processing import parse_document
+
+    message = EmailMessage()
+    message.set_type("multipart/related")
+    message.add_alternative("<p>Требование из веб-архива</p>", subtype="html", charset="utf-8")
+    parsed = parse_document("requirements.mht", "multipart/related", message.as_bytes(), 100)
+
+    assert parsed.parser == "mht"
+    assert "Требование из веб-архива" in parsed.plain_text
+    assert any("изображения не распознавались" in warning for warning in parsed.warnings)
+
+
+def test_pptx_parser_keeps_slide_number_and_table_rows():
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    from app.document_processing import parse_document
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    slide.shapes.add_textbox(Inches(1), Inches(1), Inches(5), Inches(1)).text = "Требование на слайде"
+    table = slide.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(5), Inches(1)).table
+    table.cell(0, 0).text = "Параметр"
+    table.cell(0, 1).text = "Значение"
+    table.cell(1, 0).text = "Площадь"
+    table.cell(1, 1).text = "1200 м²"
+    binary = BytesIO()
+    presentation.save(binary)
+
+    parsed = parse_document("requirements.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", binary.getvalue(), 100)
+
+    assert parsed.parser == "pptx"
+    assert any(block.page_no == 1 and "Требование на слайде" in block.text for block in parsed.blocks)
+    table_block = next(block for block in parsed.blocks if block.kind == "table")
+    assert table_block.rows[1] == ["Площадь", "1200 м²"]
+
+
+def test_pdf_parser_detects_tables_as_structured_blocks():
+    import fitz
+
+    from app.document_processing import parse_pdf
+
+    document = fitz.open()
+    page = document.new_page()
+    for x in (50, 200, 350):
+        page.draw_line((x, 50), (x, 140))
+    for y in (50, 80, 110, 140):
+        page.draw_line((50, y), (350, y))
+    for x, y, value in (
+        (55, 70, "Field"), (205, 70, "Value"),
+        (55, 100, "Area"), (205, 100, "1200 m2"),
+    ):
+        page.insert_text((x, y), value)
+    parsed = parse_pdf(document.tobytes())
+    document.close()
+
+    table = next(block for block in parsed.blocks if block.kind == "table")
+    assert table.rows[1] == ["Area", "1200 m2"]
+    assert "Field: Area" in table.text
+
+
 def test_field_source_requires_matching_path_and_verbatim_fragment():
     document = {
         "blocks": [{"path": "/page/4/p/3", "page_no": 4, "text": "Общая площадь 8426,7 кв. м."}]

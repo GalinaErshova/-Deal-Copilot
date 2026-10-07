@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useState} from "react";
+import {useEffect,useState,type ReactNode} from "react";
 
 const API=process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -9,12 +9,36 @@ type Doc={id:number;filename:string;parser?:string;confidence?:string;status:str
 type Field={id:number;key:string;label:string;value:string|null;unit?:string;confidence?:number;status:string;source_document_id?:number;source_location?:string;source_fragment?:string;confirmed:boolean};
 type Step={name:string;status:string;duration_ms?:number;input?:unknown;output?:unknown;warnings?:string[]};
 type Run={id:number;status:string;steps:Step[]};
+type ParsedBlock={kind:string;text:string;path:string;page_no?:number;title?:string;rows?:string[][]};
+type ProcessProgress={value:number;label:string};
 type Calc={calculation_id:number;labor_hours_month:number;fte:number;physical_staff:number;revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
 type AppSettings={calculation_defaults:CalculationForm;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
 const fmt=(n:number,locale:string,digits:number)=>new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(n);
 const money=(n:number,locale:string,currency:string,digits:number)=>new Intl.NumberFormat(locale,{style:"currency",currency,maximumFractionDigits:digits}).format(n);
+
+function evidenceText(text:string,fragments:string[]){
+  let parts:ReactNode[]=[text];
+  fragments.filter(Boolean).forEach((fragment,index)=>{
+    const next:React.ReactNode[]=[];
+    parts.forEach((part,partIndex)=>{
+      if(typeof part!=="string"){next.push(part);return;}
+      const start=part.toLocaleLowerCase().indexOf(fragment.toLocaleLowerCase());
+      if(start<0){next.push(part);return;}
+      next.push(part.slice(0,start),<mark key={`${index}-${partIndex}`}>{part.slice(start,start+fragment.length)}</mark>,part.slice(start+fragment.length));
+    });
+    parts=next;
+  });
+  return parts;
+}
+
+function documentTable(rows:string[][]){
+  if(!rows?.length)return null;
+  return <div className="tablePreview"><table><tbody>{rows.map((row,rowIndex)=><tr key={rowIndex}>{row.map((cell,cellIndex)=>rowIndex===0
+    ?<th key={cellIndex}>{cell||`Столбец ${cellIndex+1}`}</th>
+    :<td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div>;
+}
 
 export default function Home(){
   const [deal,setDeal]=useState<Deal|null>(null);
@@ -27,6 +51,7 @@ export default function Home(){
   const [selectedDoc,setSelectedDoc]=useState<number|null>(null);
   const [parsed,setParsed]=useState<any>(null);
   const [highlightPath,setHighlightPath]=useState<string|null>(null);
+  const [processProgress,setProcessProgress]=useState<ProcessProgress|null>(null);
   const [calc,setCalc]=useState<Calc|null>(null);
   const [error,setError]=useState("");
   const [form,setForm]=useState<CalculationForm|null>(null);
@@ -84,10 +109,42 @@ export default function Home(){
   async function process(){
     if(!deal)return;
     setBusy(true);setError("");
+    const previousRunId=Math.max(0,...runs.map(run=>run.id));
+    let stopPolling=false;
+    setProcessProgress({value:4,label:"Подключаем обработку документов…"});
+    const progressPolling=(async()=>{
+      while(!stopPolling){
+        try{
+          const currentRuns:Run[]=await req("/deals/"+deal.id+"/pipeline");
+          setRuns(currentRuns);
+          const currentRun=currentRuns.find(run=>run.id>previousRunId);
+          if(currentRun){
+            const parseSteps=currentRun.steps.filter(step=>step.name.startsWith("parse:"));
+            const finished=parseSteps.filter(step=>step.status==="success"||step.status==="failed").length;
+            const parsedCount=parseSteps.filter(step=>step.status==="success").length;
+            const parseProgress=docs.length?Math.round(finished/docs.length*76):0;
+            if(currentRun.status==="success"){
+              setProcessProgress({value:100,label:"Требования извлечены"});return;
+            }
+            if(currentRun.status==="failed"){
+              setProcessProgress({value:Math.max(8,8+parseProgress),label:"Обработка завершилась с ошибкой"});return;
+            }
+            if(finished>=docs.length){
+              setProcessProgress({value:88,label:"Документы разобраны. Модель извлекает требования…"});
+            }else{
+              setProcessProgress({value:Math.max(8,8+parseProgress),label:`Разобрано документов: ${parsedCount} из ${docs.length}`});
+            }
+          }
+        }catch{/* Основной запрос покажет ошибку, если обработка завершится неудачно. */}
+        await new Promise(resolve=>window.setTimeout(resolve,800));
+      }
+    })();
     try{
       await req("/deals/"+deal.id+"/process",{method:"POST"});
+      stopPolling=true;await progressPolling;
+      setProcessProgress({value:100,label:"Требования извлечены"});
       await refresh();setActive("review");
-    }catch(e:any){setError(e.message);await refresh().catch(()=>{});setActive("documents")}finally{setBusy(false)}
+    }catch(e:any){stopPolling=true;await progressPolling;setProcessProgress(null);setError(e.message);await refresh().catch(()=>{});setActive("documents")}finally{stopPolling=true;setBusy(false);window.setTimeout(()=>setProcessProgress(null),1200)}
   }
   async function openDoc(id:number,path?:string){
     setSelectedDoc(id);
@@ -209,17 +266,32 @@ export default function Home(){
 
     {active==="documents"&&<section className="panel">
       <div className="sectionHead">
-        <div><h2>Сверка документов</h2><p className="muted">Оригинал слева, структурированный результат справа — механика Ask-Learn.</p></div>
+        <div><h2>Сверка документов</h2><p className="muted">Предпросмотр документа слева, распознанные блоки справа; проверенные цитаты подсвечены.</p></div>
         <button disabled={!docs.length||busy} onClick={process}>Распознать и извлечь требования</button>
       </div>
+      {processProgress&&<div className="processingProgress" role="status" aria-live="polite">
+        <div className="progressLabel"><span>{processProgress.label}</span><b>{processProgress.value}%</b></div>
+        <div className="progressTrack" role="progressbar" aria-label="Ход обработки документов" aria-valuemin={0} aria-valuemax={100} aria-valuenow={processProgress.value} aria-valuetext={processProgress.label}>
+          <span style={{width:`${processProgress.value}%`}}/>
+        </div>
+      </div>}
       <div className="docList">
         {docs.map(d=><button key={d.id} onClick={()=>openDoc(d.id)} className={selectedDoc===d.id?"selected":""}><span>{d.filename}</span><small>{(d.parser||"—")+" · "+(d.confidence||"—")+" · "+d.status}</small></button>)}
       </div>
       {selectedDoc&&<div className="split">
-        <article><h3>Оригинал</h3><iframe title="original" src={API+"/documents/"+selectedDoc+"/original"}/></article>
-        <article><h3>Результат парсинга</h3><div className="parsed">
+        <article><h3>Документ</h3><a className="downloadOriginal" href={API+"/documents/"+selectedDoc+"/original"} download={docs.find(d=>d.id===selectedDoc)?.filename}>Скачать исходный файл ↗</a>
+          {docs.find(d=>d.id===selectedDoc)?.filename.toLowerCase().endsWith(".pdf")
+            ?<iframe className="originalPreview" title="Исходный PDF" src={API+"/documents/"+selectedDoc+"/original"}/>
+            :<div className="parsed documentPreview">
+              {parsed?.blocks?.length?parsed.blocks.map((b:ParsedBlock,i:number)=><div className="sourceBlock" key={i}>{b.page_no&&<small>{parsed.parser==="pptx"?"Слайд":"Страница"} {b.page_no}</small>}{b.title&&<h4>{b.title}</h4>}{b.kind==="table"||b.kind==="sheet"?documentTable(b.rows||[]):<p>{b.text}</p>}</div>):<div className="empty">Предпросмотр появится после разбора документа. Исходный файл можно скачать по ссылке выше.</div>}
+            </div>}
+        </article>
+        <article><h3>Распознанный текст</h3><div className="parsed">
           {parsed?.warnings?.map((w:string)=><div className="warning" key={w}>{w}</div>)}
-          {parsed?.blocks?.map((b:any,i:number)=><div data-path={b.path} className={"block "+(highlightPath===b.path?"highlighted":"")} key={i}><small>{(b.page_no?("стр. "+b.page_no+" · "):"")+b.path}</small>{b.title&&<b>{b.title}</b>}<p>{b.text}</p></div>)}
+          {parsed?.blocks?.map((b:ParsedBlock,i:number)=>{
+            const fragments=fields.filter(field=>field.status==="source_verified"&&field.source_document_id===selectedDoc&&field.source_location?.split(" ")[0]===b.path&&field.source_fragment).map(field=>field.source_fragment as string);
+            return <div data-path={b.path} className={"block "+(highlightPath===b.path||fragments.length?"highlighted":"")} key={i}><small>{(b.page_no?((parsed.parser==="pptx"?"слайд ":"стр. ")+b.page_no+" · "):"")+b.path}{fragments.length>0&&<span className="evidenceTag">Есть в требованиях</span>}</small>{b.title&&<b>{b.title}</b>}<p>{evidenceText(b.text,fragments)}</p>{(b.kind==="table"||b.kind==="sheet")&&documentTable(b.rows||[])}</div>;
+          })}
         </div></article>
       </div>}
     </section>}

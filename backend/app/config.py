@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Runtime and document-processing limits.
     cors_origins: str = "http://localhost:3000"
-    accepted_upload_extensions: str = ".pdf,.docx,.xlsx"
+    accepted_upload_extensions: str = ".pdf,.docx,.pptx,.xlsx,.rtf,.mht,.mhtml,.html,.htm,.md,.markdown,.txt"
     max_upload_bytes: int = 20_000_000
     max_upload_total_bytes: int = 50_000_000
     max_files_per_upload: int = 20
