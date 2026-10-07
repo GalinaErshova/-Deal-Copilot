@@ -23,6 +23,7 @@ export default function Home(){
   const [busy,setBusy]=useState(false);
   const [selectedDoc,setSelectedDoc]=useState<number|null>(null);
   const [parsed,setParsed]=useState<any>(null);
+  const [highlightPath,setHighlightPath]=useState<string|null>(null);
   const [calc,setCalc]=useState<Calc|null>(null);
   const [error,setError]=useState("");
   const [form,setForm]=useState({
@@ -73,8 +74,17 @@ export default function Home(){
       await refresh();setActive("review");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
-  async function openDoc(id:number){
-    setSelectedDoc(id);setParsed(await req("/documents/"+id+"/parsed"));setActive("documents");
+  async function openDoc(id:number,path?:string){
+    setSelectedDoc(id);
+    setHighlightPath(path||null);
+    setParsed(await req("/documents/"+id+"/parsed"));
+    setActive("documents");
+    if(path){
+      setTimeout(()=>{
+        const el=document.querySelector('[data-path="'+CSS.escape(path)+'"]');
+        el?.scrollIntoView({behavior:"smooth",block:"center"});
+      },120);
+    }
   }
   async function saveField(row:Field,value:string){
     await req("/fields/"+row.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:value,confirmed:true})});
@@ -155,7 +165,7 @@ export default function Home(){
         <article><h3>Оригинал</h3><iframe title="original" src={API+"/documents/"+selectedDoc+"/original"}/></article>
         <article><h3>Результат парсинга</h3><div className="parsed">
           {parsed?.warnings?.map((w:string)=><div className="warning" key={w}>{w}</div>)}
-          {parsed?.blocks?.map((b:any,i:number)=><div className="block" key={i}><small>{(b.page_no?("стр. "+b.page_no+" · "):"")+b.path}</small>{b.title&&<b>{b.title}</b>}<p>{b.text}</p></div>)}
+          {parsed?.blocks?.map((b:any,i:number)=><div data-path={b.path} className={"block "+(highlightPath===b.path?"highlighted":"")} key={i}><small>{(b.page_no?("стр. "+b.page_no+" · "):"")+b.path}</small>{b.title&&<b>{b.title}</b>}<p>{b.text}</p></div>)}
         </div></article>
       </div>}
     </section>}
@@ -173,7 +183,7 @@ export default function Home(){
             <span>{f.unit}</span>
             <button className={f.confirmed?"confirmed":""} onClick={()=>saveField(f,f.value||"")}>{f.confirmed?"✓ Подтверждено":"Подтвердить"}</button>
           </div>
-          <details><summary>Источник</summary><p>{f.source_location||"Источник не указан"}</p><blockquote>{f.source_fragment||"Фрагмент будет доступен при реальном AI extraction."}</blockquote></details>
+          <details><summary>Источник</summary><p>{f.source_location||"Источник не указан"}</p><blockquote>{f.source_fragment||"Фрагмент будет доступен при реальном AI extraction."}</blockquote>{f.source_document_id&&<button onClick={()=>openDoc(f.source_document_id as number,(f.source_location||"").split(" ")[0])}>Открыть источник в сверке →</button>}</details>
         </div>)}
       </div>
     </section>}
