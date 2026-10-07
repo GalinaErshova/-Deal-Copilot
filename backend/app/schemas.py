@@ -117,6 +117,24 @@ class CalculationRequest(BaseModel):
             raise ValueError("overhead_rate + target_margin must be less than 1")
         return self
 
+class AreaComponentCalculation(BaseModel):
+    id: str
+    area_m2: float = Field(gt=0)
+    productivity_m2_per_shift: float = Field(gt=0)
+    shifts_per_month: float = Field(gt=0)
+    confirmed: bool = False
+
+class CalculationBreakdownRequest(BaseModel):
+    components: list[AreaComponentCalculation] = Field(min_length=1)
+    assumptions: CalculationRequest
+
+    @model_validator(mode="after")
+    def validate_unique_components(self):
+        component_ids = [component.id for component in self.components]
+        if len(component_ids) != len(set(component_ids)):
+            raise ValueError("component ids must be unique")
+        return self
+
 class ManualAreaFieldRequest(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     value: float = Field(gt=0)

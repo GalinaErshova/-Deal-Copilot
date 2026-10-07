@@ -12,9 +12,10 @@ type Run={id:number;status:string;steps:Step[]};
 type ParsedBlock={kind:string;text:string;path:string;page_no?:number;title?:string;rows?:string[][]};
 type ParsedDocument={parser:string;blocks:ParsedBlock[];warnings?:string[]};
 type ProcessProgress={value:number;label:string};
-type Calc={calculation_id:number;labor_hours_month:number;fte:number;physical_staff:number;revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
+type AreaComponent={id:string;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number;source_document_name:string;source_location:string;source_fragment:string;curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;shifts_per_month:number|null;confirmed:boolean;labor_hours_month?:number;fte?:number;physical_staff?:number};
+type Calc={calculation_id:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
-type AppSettings={calculation_defaults:CalculationForm;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
+type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
 const fmt=(n:number,locale:string,digits:number)=>new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(n);
 const money=(n:number,locale:string,currency:string,digits:number)=>new Intl.NumberFormat(locale,{style:"currency",currency,maximumFractionDigits:digits}).format(n);
@@ -73,6 +74,7 @@ export default function Home(){
   const [appSettings,setAppSettings]=useState<AppSettings|null>(null);
   const [docs,setDocs]=useState<Doc[]>([]);
   const [fields,setFields]=useState<Field[]>([]);
+  const [areaComponents,setAreaComponents]=useState<AreaComponent[]>([]);
   const [runs,setRuns]=useState<Run[]>([]);
   const [active,setActive]=useState("upload");
   const [busy,setBusy]=useState(false);
@@ -101,9 +103,16 @@ export default function Home(){
     const all=await Promise.all([
       req("/deals/"+deal.id+"/documents"),
       req("/deals/"+deal.id+"/fields"),
-      req("/deals/"+deal.id+"/pipeline")
+      req("/deals/"+deal.id+"/pipeline"),
+      req("/deals/"+deal.id+"/area-components")
     ]);
     setDocs(all[0]);setFields(all[1]);setRuns(all[2]);
+    setAreaComponents((current:AreaComponent[])=>all[3].map((source:AreaComponent)=>{
+      const previous=current.find(item=>item.id===source.id);
+      return {...source,area_m2:previous?.area_m2??source.area_m2,
+        productivity_m2_per_shift:previous?.productivity_m2_per_shift??null,
+        shifts_per_month:previous?.shifts_per_month??null,confirmed:previous?.confirmed??false};
+    }));
   }
   useEffect(()=>{
     Promise.all([req("/settings"),req("/deals")]).then(([s,deals]:[AppSettings,Deal[]])=>{
@@ -117,6 +126,15 @@ export default function Home(){
     }).catch((e:any)=>setError(e.message));
   },[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
+  useEffect(()=>{
+    const total=areaComponents.reduce((sum,component)=>sum+component.area_m2,0);
+    if(total>0)setForm(current=>current&&current.area_m2!==total?({...current,area_m2:total}):current);
+  },[areaComponents,appSettings]);
+  useEffect(()=>{
+    if(!appSettings?.working_days_per_month)return;
+    setAreaComponents(current=>current.map(component=>component.shifts_per_month===null
+      ?({...component,shifts_per_month:appSettings.working_days_per_month}):component));
+  },[appSettings?.working_days_per_month]);
   useEffect(()=>{
     const documentIds=[...new Set(fields.map(field=>field.source_document_id).filter((id):id is number=>Boolean(id)))].filter(id=>!sourceParsed[id]);
     if(!documentIds.length)return;
@@ -132,7 +150,7 @@ export default function Home(){
     try{
       const d=await req("/deals?title="+encodeURIComponent("Демо: регулярный клининг офиса"),{method:"POST"});
       window.localStorage.setItem("dealCopilot.activeDealId",String(d.id));
-      setDeal(d);setDocs([]);setFields([]);setRuns([]);setCalc(null);setActive("upload");
+      setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setCalc(null);setActive("upload");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
   async function upload(files:FileList|null){
@@ -207,12 +225,23 @@ export default function Home(){
   }
   async function calculate(){
     if(!deal||!form)return;
-    if(!criticalReady){setError("Подтвердите критическое поле «Площадь» перед расчётом.");setActive("review");return;}
+    if(!criticalReady){setError(areaComponents.length?"Укажите производительность и число смен, затем подтвердите каждую строку площади.":"Подтвердите критическое поле «Площадь» перед расчётом.");setActive(areaComponents.length?"workforce":"review");return;}
     setBusy(true);setError("");
     try{
-      const result=await req("/deals/"+deal.id+"/calculate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)});
+      const path=areaComponents.length?"/calculate-breakdown":"/calculate";
+      const body=areaComponents.length?{assumptions:form,components:areaComponents.map(({id,area_m2,productivity_m2_per_shift,shifts_per_month,confirmed})=>({id,area_m2,productivity_m2_per_shift,shifts_per_month,confirmed}))}:form;
+      const result=await req("/deals/"+deal.id+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       setCalc(result);setActive("economics");await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+
+  function updateAreaComponent(id:string,patch:Partial<AreaComponent>){
+    setAreaComponents(current=>current.map(component=>component.id===id?({...component,...patch,confirmed:false}):component));
+    setCalc(null);
+  }
+
+  function confirmAreaComponent(id:string,confirmed:boolean){
+    setAreaComponents(current=>current.map(component=>component.id===id?({...component,confirmed}):component));
   }
 
   async function addManualArea(){
@@ -239,7 +268,10 @@ export default function Home(){
   const currentTab=tabs.find(tab=>tab.key===active)??tabs[0];
   const confirmed=fields.filter(x=>x.confirmed).length;
   const areaField=fields.find(x=>x.key==="area_m2");
-  const criticalReady=Boolean(areaField?.confirmed && areaField.value && form);
+  const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
+    component.curation_status==="verified"&&component.confirmed&&component.area_m2>0&&(component.productivity_m2_per_shift||0)>0&&(component.shifts_per_month||0)>0
+  ));
+  const criticalReady=Boolean(form&&(areaComponents.length?areaBreakdownReady:areaField?.confirmed&&areaField.value));
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
 
   return <div className="appShell">
@@ -362,23 +394,48 @@ export default function Home(){
       <div>
         <h2>Параметры расчёта</h2>
         {form&&[
-          ["area_m2","Площадь, м²"],["productivity_m2_per_shift","Выработка, м²/смену"],
+          ...(areaComponents.length?[]:[["area_m2","Площадь, м²"],["productivity_m2_per_shift","Выработка, м²/смену"]]),
           ["monthly_hours_per_fte","Фонд времени, ч/мес"],["hourly_staff_cost",`Стоимость часа, ${appSettings?.currency_unit_symbol??""}`],
           ["replacement_coefficient","Коэффициент замещения"]
         ].map(function(x){const k=x[0] as keyof CalculationForm;return <label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={form[k]} onChange={e=>setForm(current=>current?({...current,[k]:Number(e.target.value)}):current)}/></label>})}
+        {areaComponents.length>0&&<div className="areaComponents">
+          <div className="sectionHead"><div><h3>Площади по адресам и видам работ</h3><p className="muted">Значения взяты из распознанных таблиц. Укажите выработку для каждой строки и сверьте цитату с документом.</p></div></div>
+          <div className="areaTotal"><span>Суммарная площадь без строк «Итого»</span><b>{appSettings?fmt(areaComponents.reduce((sum,item)=>sum+item.area_m2,0),appSettings.display_locale,appSettings.display_number_max_fraction_digits):areaComponents.reduce((sum,item)=>sum+item.area_m2,0)} м²</b></div>
+          {areaComponents.map(component=><div className="areaComponent" key={component.id}>
+            <div className="areaComponentTitle"><b>{component.address}</b><span>{component.area_type} · {component.work_type}</span></div>
+            <div className="areaComponentInputs">
+              <label><span>Площадь, м²</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})}/></label>
+              <label><span>Выработка, м²/смену</span><input type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Задайте для строки" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/></label>
+              <label><span>Смен в месяц</span><input type="number" min="0" step="any" value={component.shifts_per_month??""} onChange={e=>updateAreaComponent(component.id,{shifts_per_month:e.target.value?Number(e.target.value):null})}/></label>
+            </div>
+            <details className="areaSource"><summary>Источник: {component.source_document_name}</summary><p>{sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</p><blockquote>{component.source_fragment}</blockquote><button onClick={()=>openDoc(component.source_document_id,component.source_location.split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button></details>
+            {component.work_type_source_fragment&&<details className="areaSource"><summary>Источник вида работ</summary><p>{component.work_type_source_location} · {docs.find(doc=>doc.id===component.work_type_source_document_id)?.filename}</p><blockquote>{component.work_type_source_fragment}</blockquote></details>}
+            {component.curation_warnings?.length?<p className="warning">Проверка строки: {component.curation_warnings.join("; ")}</p>:null}
+            <label className="areaConfirm"><input type="checkbox" checked={component.confirmed} disabled={component.curation_status!=="verified"||component.area_m2<=0||(component.productivity_m2_per_shift||0)<=0||(component.shifts_per_month||0)<=0} onChange={e=>confirmAreaComponent(component.id,e.target.checked)}/><span>Сверила строку с документом и подтвердила параметры расчёта</span></label>
+          </div>)}
+        </div>}
         <button className="primary" disabled={!criticalReady} onClick={calculate}>Рассчитать трудоёмкость и экономику</button>
         {!form&&<p className="empty">Загрузка настроек расчёта…</p>}
-        {!criticalReady&&<p className="warning">Расчёт заблокирован: подтвердите площадь в карточке требований.</p>}
+        {!criticalReady&&<p className="warning">{areaComponents.length?"Чтобы запустить расчёт, задайте выработку для каждого адреса и вида работ и подтвердите строки.":"Расчёт заблокирован: подтвердите площадь в карточке требований."}</p>}
       </div>
       <div className="calcPreview">
         <h2>Логика MVP-1</h2>
-        <div className="formula">Площадь ÷ выработка × смены → человеко-часы → FTE → физическая численность</div>
+        <div className="formula">По каждой строке: площадь ÷ её выработка × смены в месяц × часы в смене → человеко-часы → FTE → численность</div>
+        <p className="muted">AI распознаёт и связывает исходные данные. Арифметику выполняет расчётный модуль, чтобы результат можно было перепроверить по формуле.</p>
         {calc&&appSettings&&<><div className="bigMetric"><b>{fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</b><span>чел.-часов / мес.</span></div><div className="metrics"><div><b>{fmt(calc.fte,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</b><span>FTE</span></div><div><b>{calc.physical_staff}</b><span>физ. сотрудников</span></div></div></>}
       </div>
     </section>}
 
     {active==="economics"&&<section className="panel">
       <div className="sectionHead"><div><h2>Экономика контракта</h2><p className="muted">Все показатели считает детерминированный Python-модуль.</p></div><button onClick={()=>setActive("decision")}>К решению →</button></div>
+      {calc?.components?.length&&appSettings&&<div className="areaResults">
+        <h3>Трудоёмкость по адресам и видам уборки</h3>
+        <p className="muted">Расчёт использует подтверждённую для каждой строки площадь, выработку и число смен. Экономика ниже считается по общей площади сделки.</p>
+        <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Выработка</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
+          {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.area_type}</small><details><summary>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</summary><blockquote>{component.source_fragment}</blockquote><button onClick={()=>openDoc(component.source_document_id,component.source_location.split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button></details></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²</td><td>{component.productivity_m2_per_shift} м²/смену</td><td>{component.shifts_per_month}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
+        </tbody></table></div>
+        <p className="areaResultsTotal">По площадкам: {fmt(calc.total_area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² · {fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} чел.-часов/мес. · {calc.physical_staff_by_site} сотрудников</p>
+      </div>}
       <div className="economicsGrid">
         <div className="controls">
           {[

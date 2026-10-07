@@ -166,6 +166,32 @@ details summary { cursor: pointer; }
 .sourceReference span { color: #91a9bc; font-size: 12px; }
 .field blockquote { padding-left: 12px; color: #c0d0dd; border-left: 2px solid #31526d; line-height: 1.6; white-space: pre-wrap; }
 .field blockquote mark { padding: 1px 2px; color: #10251d; background: #a5edc9; border-radius: 3px; }
+.areaComponents { display: grid; gap: 12px; margin: 18px 0; }
+.areaComponents .sectionHead { margin: 0; }
+.areaComponents h3, .areaResults h3 { margin: 0 0 6px; }
+.areaTotal, .areaResultsTotal { display: flex; justify-content: space-between; gap: 12px; padding: 12px; color: #b7c9d8; background: #0b2032; border-radius: 9px; }
+.areaTotal b, .areaResultsTotal { color: #82e4c1; }
+.areaComponent { padding: 13px; background: #0a1826; border: 1px solid #19334c; border-radius: 10px; }
+.areaComponentTitle { display: grid; gap: 3px; margin-bottom: 10px; }
+.areaComponentTitle span, .areaComponent small { color: #91a9bc; font-size: 12px; }
+.areaComponentInputs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
+.areaComponentInputs label { display: grid; gap: 5px; color: #a9bfd0; font-size: 12px; }
+.areaComponentInputs input { min-width: 0; width: 100%; padding: 8px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 7px; }
+.areaSource { margin-top: 11px; }
+.areaSource p { color: #91a9bc; font-size: 12px; }
+.areaConfirm { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; color: #b7c9d8; font-size: 12px; }
+.areaConfirm input { margin-top: 2px; accent-color: #70e0b7; }
+.areaResults { margin: 18px 0; padding: 16px; background: #0a1826; border: 1px solid #19334c; border-radius: 12px; }
+.areaResultsTable { overflow: auto; margin-top: 12px; }
+.areaResultsTable table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.areaResultsTable th, .areaResultsTable td { min-width: 85px; padding: 9px; border-bottom: 1px solid #244159; text-align: left; vertical-align: top; }
+.areaResultsTable th { color: #9fc1d8; }
+.areaResultsTable td:first-child { min-width: 230px; }
+.areaResultsTable td small { display: block; margin: 3px 0 7px; }
+.areaResultsTable td details { color: #91a9bc; }
+.areaResultsTotal { display: block; margin: 12px 0 0; }
+.areaResultsTotal { color: #82e4c1; }
+@media (max-width: 760px) { .areaComponentInputs { grid-template-columns: 1fr; } .areaTotal { align-items: flex-start; flex-direction: column; } }
 .control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 150px); align-items: center; gap: 15px; margin: 9px 0; }
 .control input { min-width: 0; padding: 9px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 8px; }
 .calcPreview { padding: 20px; background: #071522; border: 1px solid #17334b; border-radius: 13px; }

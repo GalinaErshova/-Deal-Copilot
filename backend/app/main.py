@@ -26,7 +26,14 @@ from .models import (
     utc_now_naive,
 )
 from .pricing import calculate
-from .schemas import CalculationRequest, DealExtraction, ManualAreaFieldRequest
+from .schemas import (
+    CalculationBreakdownRequest,
+    CalculationRequest,
+    DealExtraction,
+    ManualAreaFieldRequest,
+)
+from .scope_curator import curate_scope_components
+from .scope_extractor import extract_area_components
 
 settings.ensure_dirs()
 Base.metadata.create_all(engine)
@@ -137,6 +144,8 @@ def _merge_extractions(extractions: list[DealExtraction]) -> DealExtraction:
 def public_settings():
     return {
         "calculation_defaults": settings.calculation_defaults,
+        "working_days_per_month": settings.working_days_per_month,
+        "hours_per_shift": settings.hours_per_shift,
         "accepted_upload_extensions": settings.parsed_upload_extensions,
         "demo_mode": settings.is_demo_mode,
         "llm_provider": settings.llm_provider,
@@ -333,6 +342,13 @@ def fields(deal_id:int,db:Session=Depends(get_db)):
              "confidence":r.confidence,"source_document_id":r.source_document_id,
              "source_location":r.source_location,"source_fragment":r.source_fragment,"confirmed":r.confirmed} for r in rows]
 
+@app.get("/api/deals/{deal_id}/area-components")
+def area_components(deal_id:int, db:Session=Depends(get_db)):
+    if not db.get(Deal, deal_id): raise HTTPException(404,"Deal not found")
+    docs=db.query(Document).filter(Document.deal_id==deal_id).order_by(Document.id).all()
+    components=extract_area_components(docs)
+    return curate_scope_components(docs,components)
+
 @app.patch("/api/fields/{field_id}")
 def update_field(field_id:int,payload:dict,db:Session=Depends(get_db)):
     row=db.get(ExtractedField,field_id)
@@ -402,6 +418,70 @@ def calculate_deal(deal_id:int,req:CalculationRequest,db:Session=Depends(get_db)
     )
     run.status="success"; run.finished_at=utc_now_naive(); db.commit()
     return {"calculation_id":calc.id,**result.model_dump()}
+
+@app.post("/api/deals/{deal_id}/calculate-breakdown")
+def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Session=Depends(get_db)):
+    deal=db.get(Deal,deal_id)
+    if not deal: raise HTTPException(404,"Deal not found")
+    docs=db.query(Document).filter(Document.deal_id==deal_id).order_by(Document.id).all()
+    source_components=curate_scope_components(docs,extract_area_components(docs))
+    source_by_id={component["id"]:component for component in source_components}
+    requested_ids={component.id for component in req.components}
+    if not source_by_id:
+        raise HTTPException(409,"В документах не найдена таблица площадей с адресами")
+    if requested_ids!=set(source_by_id):
+        raise HTTPException(409,"Состав адресов и площадей изменился. Обновите страницу и проверьте источники")
+    if any(component["curation_status"]!="verified" for component in source_components):
+        raise HTTPException(409,"Куратор обнаружил непроверенные источники или неоднозначные строки. Исправьте данные документов перед расчётом")
+    if any(not component.confirmed for component in req.components):
+        raise HTTPException(409,"Сверьте и подтвердите площадь, производительность и число смен для каждой строки")
+
+    items_by_id={component.id:component for component in req.components}
+    total_area=sum(items_by_id[component["id"]].area_m2 for component in source_components)
+    total_workload=sum(
+        items_by_id[component["id"]].area_m2
+        / items_by_id[component["id"]].productivity_m2_per_shift
+        * items_by_id[component["id"]].shifts_per_month
+        for component in source_components
+    )
+    if total_area<=0 or total_workload<=0:
+        raise HTTPException(409,"Для расчёта нужна положительная площадь и производительность")
+
+    line_results=[]
+    for source in source_components:
+        item=items_by_id[source["id"]]
+        labor_hours=(item.area_m2/item.productivity_m2_per_shift*settings.hours_per_shift*item.shifts_per_month)
+        fte=labor_hours/req.assumptions.monthly_hours_per_fte
+        line_results.append({
+            **source,
+            "area_m2":item.area_m2,
+            "productivity_m2_per_shift":item.productivity_m2_per_shift,
+            "shifts_per_month":item.shifts_per_month,
+            "labor_hours_month":round(labor_hours,settings.labor_hours_decimal_places),
+            "fte":round(fte,settings.fte_decimal_places),
+            "physical_staff":max(settings.minimum_physical_staff,math.ceil(fte*req.assumptions.replacement_coefficient)),
+        })
+
+    effective_productivity=total_area*settings.working_days_per_month/total_workload
+    calculation_request=req.assumptions.model_copy(update={
+        "area_m2":total_area,
+        "productivity_m2_per_shift":effective_productivity,
+    })
+    aggregate=calculate(calculation_request,settings)
+    output={
+        "components":line_results,
+        "total_area_m2":round(total_area,settings.currency_decimal_places),
+        "physical_staff_by_site":sum(item["physical_staff"] for item in line_results),
+        "aggregate":aggregate.model_dump(),
+    }
+    run=PipelineRun(deal_id=deal_id);db.add(run);db.commit();db.refresh(run)
+    calc=Calculation(deal_id=deal_id,input_json=req.model_dump_json(),
+                     output_json=json.dumps(output,ensure_ascii=False),decision=aggregate.decision)
+    db.add(calc);deal.status="calculated";db.commit();db.refresh(calc)
+    add_step(db,run,"deterministic_calculation_by_area","success",
+             req.model_dump(),{"calculation_id":calc.id,**output})
+    run.status="success";run.finished_at=utc_now_naive();db.commit()
+    return {"calculation_id":calc.id,**aggregate.model_dump(),**output}
 
 @app.get("/api/deals/{deal_id}/calculations")
 def calculations(deal_id:int,db:Session=Depends(get_db)):
