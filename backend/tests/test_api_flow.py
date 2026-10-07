@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from app.main import app
+from app.schemas import CalculationRequest
 
 client = TestClient(app)
 
@@ -49,3 +50,55 @@ def test_create_deal_and_calculate():
         any(step["name"] == "deterministic_calculation" for step in run["steps"])
         for run in runs
     )
+
+def test_upload_process_review_calculate_xlsx():
+    from io import BytesIO
+    from openpyxl import Workbook
+
+    deal = client.post("/api/deals", params={"title": "E2E API fixture"}).json()
+    deal_id = deal["id"]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ТЗ"
+    ws.append(["Параметр", "Значение"])
+    ws.append(["Общая площадь объекта", "1200 м²"])
+    ws.append(["График уборки", "5/2"])
+    ws.append(["Отсрочка оплаты", "30 календарных дней"])
+    stream = BytesIO()
+    wb.save(stream)
+
+    upload = client.post(
+        f"/api/deals/{deal_id}/documents",
+        files={
+            "files": (
+                "requirements.xlsx",
+                stream.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert upload.status_code == 200
+    assert upload.json()["documents"][0]["filename"] == "requirements.xlsx"
+
+    processed = client.post(f"/api/deals/{deal_id}/process")
+    assert processed.status_code == 200
+    extraction = processed.json()
+    assert extraction["fields"]
+
+    fields = client.get(f"/api/deals/{deal_id}/fields").json()
+    area = next(field for field in fields if field["key"] == "area_m2")
+    assert area["value"] == "1200"
+
+    confirmed = client.patch(
+        f"/api/fields/{area['id']}",
+        json={"value": "1200", "confirmed": True},
+    )
+    assert confirmed.status_code == 200
+
+    calc = client.post(
+        f"/api/deals/{deal_id}/calculate",
+        json=CalculationRequest().model_dump(),
+    )
+    assert calc.status_code == 200
+    assert calc.json()["decision"] in {"BID", "BID WITH CONDITIONS", "NO BID"}
