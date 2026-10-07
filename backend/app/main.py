@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import math
 import time
@@ -8,7 +9,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -31,6 +32,7 @@ from .schemas import (
     CalculationRequest,
     DealExtraction,
     ManualAreaFieldRequest,
+    ProposalExportRequest,
 )
 from .scope_curator import curate_scope_components
 from .scope_extractor import extract_area_components
@@ -543,3 +545,81 @@ def calculations(deal_id:int,db:Session=Depends(get_db)):
     rows=db.query(Calculation).filter(Calculation.deal_id==deal_id).order_by(Calculation.id.desc()).all()
     return [{"id":r.id,"created_at":r.created_at,"decision":r.decision,
              "input":json.loads(r.input_json),"output":json.loads(r.output_json)} for r in rows]
+
+@app.post("/api/deals/{deal_id}/proposal")
+def export_proposal(deal_id:int,req:ProposalExportRequest,db:Session=Depends(get_db)):
+    """Формирует редактируемый проект КП из подтверждённых требований и последнего расчёта."""
+    deal=db.get(Deal,deal_id)
+    if not deal:
+        raise HTTPException(404,"Deal not found")
+    calculation=db.query(Calculation).filter(Calculation.deal_id==deal_id).order_by(Calculation.id.desc()).first()
+    if not calculation:
+        raise HTTPException(409,"Сначала выполните расчёт экономики сделки")
+
+    from docx import Document as WordDocument
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    output=json.loads(calculation.output_json)
+    aggregate=output.get("aggregate",output)
+    components=output.get("components",[])
+    calculation_input=json.loads(calculation.input_json)
+    assumptions=calculation_input.get("assumptions",calculation_input)
+    price_per_m2=float(assumptions.get("service_price_per_m2_month",0))
+    doc=WordDocument()
+    title=doc.add_heading("Коммерческое предложение",0)
+    title.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph(f"Заказчик: {req.customer_name.strip() or '[указать заказчика]'}")
+    doc.add_paragraph(f"Исполнитель: {req.supplier_name.strip() or '[указать исполнителя]'}")
+    if req.contact_details.strip():
+        doc.add_paragraph(f"Контакты: {req.contact_details.strip()}")
+    doc.add_paragraph(f"Предложение действительно {req.validity_days} календарных дней с даты подготовки.")
+    doc.add_heading("Предмет предложения",level=1)
+    doc.add_paragraph("Оказание услуг по уборке объектов на условиях и в объёме, указанных ниже.")
+
+    if components:
+        doc.add_heading("Объекты и виды работ",level=1)
+        table=doc.add_table(rows=1,cols=6)
+        table.style="Light Shading Accent 1"
+        for cell,value in zip(table.rows[0].cells,["Адрес","Вид работ","Площадь, м²","Режим","Тариф, ₽/м²·мес.","Стоимость, ₽/мес."]):
+            cell.text=value
+        for item in components:
+            row=table.add_row().cells
+            area=float(item.get("area_m2",0) or 0)
+            rate=f"{price_per_m2:,.2f}".replace(","," ").replace(".",",")
+            monthly=f"{area*price_per_m2:,.2f}".replace(","," ").replace(".",",")
+            for cell,value in zip(row,[item.get("address","[уточнить]"),item.get("work_type","[уточнить]"),
+                str(item.get("area_m2","—")),item.get("schedule_label",item.get("schedule_mode","[уточнить]")),rate,monthly]):
+                cell.text=str(value)
+
+    confirmed_fields=db.query(ExtractedField).filter(
+        ExtractedField.deal_id==deal_id,ExtractedField.confirmed.is_(True)
+    ).order_by(ExtractedField.id).all()
+    confirmed_term=next((field.value for field in confirmed_fields if field.key=="contract_months" and field.value),None)
+    try:
+        contract_months=int(confirmed_term) if confirmed_term else int(assumptions.get("contract_months",1))
+    except (TypeError,ValueError):
+        contract_months=int(assumptions.get("contract_months",1))
+    if confirmed_fields:
+        doc.add_heading("Подтверждённые условия",level=1)
+        for field in confirmed_fields:
+            if field.key=="area_m2" and components:
+                continue
+            doc.add_paragraph(f"{field.label}: {field.value or '—'} {field.unit or ''}".strip(),style="List Bullet")
+
+    doc.add_heading("Стоимость услуг",level=1)
+    monthly_price=f"{aggregate.get('revenue_with_vat',0):,.2f}".replace(","," ").replace(".",",")
+    doc.add_paragraph(f"Стоимость за месяц: {monthly_price} ₽, включая НДС при его применении.")
+    doc.add_paragraph(f"Срок оказания услуг: {contract_months} мес.")
+    contract_price=f"{aggregate.get('revenue_with_vat',0)*contract_months:,.2f}".replace(","," ").replace(".",",")
+    doc.add_paragraph(f"Общая стоимость за срок договора: {contract_price} ₽.")
+    doc.add_paragraph("Налоговый режим и ставка НДС подлежат проверке и уточнению перед отправкой.")
+    if req.additional_terms.strip():
+        doc.add_heading("Дополнительные условия",level=1)
+        doc.add_paragraph(req.additional_terms.strip())
+    doc.add_paragraph("Проект сформирован по подтверждённым данным сделки. Проверьте реквизиты, налогообложение и договорные условия перед отправкой заказчику.")
+
+    buffer=io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return StreamingResponse(buffer,media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition":f'attachment; filename="commercial-proposal-deal-{deal_id}.docx"'})

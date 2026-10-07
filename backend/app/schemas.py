@@ -142,6 +142,13 @@ class ManualAreaFieldRequest(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     value: float = Field(gt=0)
 
+class ProposalExportRequest(BaseModel):
+    customer_name: str = Field(default="", max_length=250)
+    supplier_name: str = Field(default="", max_length=250)
+    contact_details: str = Field(default="", max_length=500)
+    validity_days: int = Field(default=10, ge=1, le=365)
+    additional_terms: str = Field(default="", max_length=4000)
+
 class CalculationResult(BaseModel):
     labor_hours_month: float
     fte: float

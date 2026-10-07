@@ -14,7 +14,7 @@ type ParsedDocument={parser:string;blocks:ParsedBlock[];warnings?:string[]};
 type ProcessProgress={value:number;label:string};
 type ScheduleMode="daily"|"weekly"|"monthly"|"on_request"|"custom"|"unspecified";
 type AreaComponent={id:string;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;labor_hours_month?:number;fte?:number;physical_staff?:number};
-type Calc={calculation_id:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
+type Calc={calculation_id:number;area_m2?:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
 type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
@@ -27,14 +27,6 @@ const shiftsForMode=(mode:ScheduleMode,settings:AppSettings|null):number|null=>{
   if(mode==="monthly")return settings.monthly_frequency_shifts;
   return null;
 };
-const scheduleCountHint=(mode:ScheduleMode,settings:AppSettings|null):string=>{
-  if(!settings)return "";
-  if(mode==="daily")return `Из настройки: ${settings.working_days_per_month} рабочих дней в месяц.`;
-  if(mode==="weekly")return `${settings.working_days_per_month} рабочих дней ÷ ${settings.working_days_per_week} дней в неделе = ${fmt(settings.working_days_per_month/settings.working_days_per_week,"ru-RU",1)} смены в среднем за месяц.`;
-  if(mode==="monthly")return `${settings.monthly_frequency_shifts} смена за месяц по настройке.`;
-  return "Количество нужно указать вручную.";
-};
-
 function productivityEstimate(component:AreaComponent,settings:AppSettings|null,monthlyHoursPerFte:number){
   const rate=component.productivity_m2_per_shift||0;
   if(!settings||rate<=0)return null;
@@ -102,6 +94,10 @@ export default function Home(){
   const [areaComponents,setAreaComponents]=useState<AreaComponent[]>([]);
   const [runs,setRuns]=useState<Run[]>([]);
   const [active,setActive]=useState("upload");
+  const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
+  const [documentsCollapsed,setDocumentsCollapsed]=useState(false);
+  const [sensitivityHelp,setSensitivityHelp]=useState(false);
+  const [proposalForm,setProposalForm]=useState({customer_name:"",supplier_name:"",contact_details:"",validity_days:10,additional_terms:""});
   const [busy,setBusy]=useState(false);
   const [selectedDoc,setSelectedDoc]=useState<number|null>(null);
   const [parsed,setParsed]=useState<any>(null);
@@ -132,9 +128,16 @@ export default function Home(){
       req("/deals/"+deal.id+"/documents"),
       req("/deals/"+deal.id+"/fields"),
       req("/deals/"+deal.id+"/pipeline"),
-      req("/deals/"+deal.id+"/area-components")
+      req("/deals/"+deal.id+"/area-components"),
+      req("/deals/"+deal.id+"/calculations")
     ]);
     setDocs(all[0]);setFields(all[1]);setRuns(all[2]);
+    const latestCalculation=all[4]?.[0];
+    if(latestCalculation){
+      const output=latestCalculation.output;
+      setCalc(output?.aggregate?{...output.aggregate,calculation_id:latestCalculation.id,components:output.components,total_area_m2:output.total_area_m2,physical_staff_by_site:output.physical_staff_by_site}:{...output,calculation_id:latestCalculation.id});
+      setCalculationConfirmed(Boolean(latestCalculation.input?.confirmed));setCalculationDirty(false);
+    }else setCalc(null);
     setAreaComponents((current:AreaComponent[])=>all[3].map((source:AreaComponent)=>{
       const previous=current.find(item=>item.id===source.id);
       return {...source,area_m2:previous?.area_m2??source.area_m2,
@@ -155,6 +158,12 @@ export default function Home(){
     }).catch((e:any)=>setError(e.message));
   },[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
+  useEffect(()=>{
+    if(!productivityHelp&&!sensitivityHelp)return;
+    const previousOverflow=document.body.style.overflow;
+    document.body.style.overflow="hidden";
+    return()=>{document.body.style.overflow=previousOverflow};
+  },[productivityHelp,sensitivityHelp]);
   useEffect(()=>{
     const total=areaComponents.reduce((sum,component)=>sum+component.area_m2,0);
     if(total>0)setForm(current=>current&&current.area_m2!==total?({...current,area_m2:total}):current);
@@ -269,6 +278,18 @@ export default function Home(){
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
+  async function downloadProposal(){
+    if(!deal)return;
+    setBusy(true);setError("");
+    try{
+      const response=await fetch(API+"/deals/"+deal.id+"/proposal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(proposalForm)});
+      if(!response.ok){const body=await response.json().catch(()=>null);throw new Error(body?.detail||`Ошибка формирования КП (${response.status})`);}
+      const blob=await response.blob();
+      const url=URL.createObjectURL(blob);const link=document.createElement("a");
+      link.href=url;link.download=`commercial-proposal-deal-${deal.id}.docx`;link.click();URL.revokeObjectURL(url);
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+
   function updateAreaComponent(id:string,patch:Partial<AreaComponent>){
     setAreaComponents(current=>current.map(component=>component.id===id?({...component,...patch}):component));
     setCalculationConfirmed(false);
@@ -304,14 +325,17 @@ export default function Home(){
     {key:"documents",label:"Документы",title:"Документы",description:"Сопоставьте оригинал файла с результатом разбора."},
     {key:"review",label:"Требования",title:"Проверка требований",description:"Проверьте извлечённые значения и подтвердите исходные данные."},
     {key:"workforce",label:"Трудоёмкость",title:"Расчёт трудоёмкости",description:"Настройте параметры объекта и проверьте потребность в персонале."},
-    {key:"economics",label:"Экономика",title:"Экономика контракта",description:"Оцените себестоимость, маржу и чувствительность к тарифу."},
-    {key:"decision",label:"Решение",title:"Коммерческое решение",description:"Посмотрите итог BID / BID WITH CONDITIONS / NO BID."},
-    {key:"pipeline",label:"Контроль",title:"Контроль обработки",description:"Проверьте входы, результаты и предупреждения каждого этапа."},
+    {key:"economics",label:"Экономика",title:"Экономика контракта",description:"Итоги расчёта, себестоимость, маржа и чувствительность к тарифу."},
+    {key:"proposal",label:"Коммерческое предложение",title:"Формирование КП",description:"Подготовьте редактируемый проект коммерческого предложения по подтверждённым данным."},
   ];
-  const currentTab=tabs.find(tab=>tab.key===active)??tabs[0];
+  const serviceTab={key:"pipeline",label:"Контроль обработки",title:"Контроль обработки",description:"Служебная информация о шагах распознавания и расчёта."};
+  const currentTab=tabs.find(tab=>tab.key===active)??(active==="pipeline"?serviceTab:tabs[0]);
+  const stageIndex=tabs.findIndex(tab=>tab.key===active);
+  const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
   const confirmed=fields.filter(x=>x.confirmed).length;
   const areaField=fields.find(x=>x.key==="area_m2");
+  const proposalContractMonths=Number(fields.find(field=>field.key==="contract_months"&&field.confirmed)?.value)||form?.contract_months||1;
   const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
     component.curation_status==="verified"&&component.schedule_status!=="needs_review"&&component.area_m2>0
     &&(component.productivity_m2_per_shift||0)>0
@@ -321,8 +345,8 @@ export default function Home(){
   const criticalReady=Boolean(calculationInputsReady&&calculationConfirmed);
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
 
-  return <div className="appShell">
-    <aside className="sidebar">
+  return <div className={"appShell "+(sidebarCollapsed?"sidebarCollapsed":"")}>
+    {!sidebarCollapsed&&<aside className="sidebar">
       <div className="sidebarBrand">
         <div className="brandMark" aria-hidden="true">DC</div>
         <div><span className="brand">Deal Copilot</span><span className="badge">MVP 0–3</span></div>
@@ -347,11 +371,18 @@ export default function Home(){
         </button>)}
       </nav>
 
+      <nav className="sideNav serviceNav" aria-label="Служебные разделы">
+        <button className={active==="pipeline"?"active":""} aria-current={active==="pipeline"?"page":undefined} onClick={()=>setActive("pipeline")}>
+          <span className="navIndex">⚙</span><span><b>Контроль обработки</b><small>Журнал шагов и ошибок</small></span><span className="navArrow" aria-hidden="true">→</span>
+        </button>
+      </nav>
+
       <footer className="sidebarFooter">
         <span className={"modeDot "+(appSettings?.demo_mode?"demo":"live")}/>
         <span>{appSettings?.demo_mode?"Тестовый режим":appSettings?.llm_provider==="local"?"MiMo · локально":"MiMo · API"}</span>
       </footer>
-    </aside>
+      <button className="sidebarToggle" type="button" onClick={()=>setSidebarCollapsed(true)} aria-label="Скрыть левую панель" title="Скрыть левую панель">‹</button>
+    </aside>}
 
     <main className="workspace">
       <header className="workspaceHeader">
@@ -360,7 +391,7 @@ export default function Home(){
           <h1>{currentTab.title}</h1>
           <p>{currentTab.description}</p>
         </div>
-        <div className="workspaceStep"><span>ШАГ</span><b>{String(tabs.findIndex(tab=>tab.key===active)+1).padStart(2,"0")}</b><i>/</i><span>{String(tabs.length).padStart(2,"0")}</span></div>
+        <div className="workspaceHeaderActions">{sidebarCollapsed&&<button type="button" className="sidebarRestore" onClick={()=>setSidebarCollapsed(false)} aria-label="Показать левую панель" title="Показать левую панель">☰</button>}{active!=="pipeline"&&<div className="workspaceStep"><span>ШАГ</span><b>{String(stageIndex+1).padStart(2,"0")}</b><i>/</i><span>{String(tabs.length).padStart(2,"0")}</span></div>}</div>
       </header>
 
       {appSettings?.demo_mode&&<div className="demoNotice"><span className="noticeIcon">i</span><span>Тестовый режим: извлечение использует заглушку, сверяйте требования с документами.</span></div>}
@@ -385,7 +416,9 @@ export default function Home(){
     {active==="documents"&&<section className="panel">
       <div className="sectionHead">
         <div><h2>Сверка документов</h2><p className="muted">Предпросмотр документа слева, распознанные блоки справа; проверенные цитаты подсвечены.</p></div>
+        <div className="sectionActions"><button type="button" onClick={()=>setDocumentsCollapsed(value=>!value)} aria-expanded={!documentsCollapsed}>{documentsCollapsed?"Показать детали":"Свернуть детали"}</button>
         <button disabled={!docs.length||busy} onClick={process}>Распознать и извлечь требования</button>
+        </div>
       </div>
       {processProgress&&<div className="processingProgress" role="status" aria-live="polite">
         <div className="progressLabel"><span>{processProgress.label}</span><b>{processProgress.value}%</b></div>
@@ -396,7 +429,7 @@ export default function Home(){
       <div className="docList">
         {docs.map(d=><button key={d.id} onClick={()=>openDoc(d.id)} className={selectedDoc===d.id?"selected":""}><span>{d.filename}</span><small>{(d.parser||"—")+" · "+(d.confidence||"—")+" · "+d.status}</small></button>)}
       </div>
-      {selectedDoc&&<div className="split">
+      {selectedDoc&&!documentsCollapsed&&<div className="split">
         <article><h3>Документ</h3><a className="downloadOriginal" href={API+"/documents/"+selectedDoc+"/original"} download={docs.find(d=>d.id===selectedDoc)?.filename}>Скачать исходный файл ↗</a>
           {docs.find(d=>d.id===selectedDoc)?.filename.toLowerCase().endsWith(".pdf")
             ?<iframe className="originalPreview" title="Исходный PDF" src={API+"/documents/"+selectedDoc+"/original"}/>
@@ -433,7 +466,7 @@ export default function Home(){
             {sourceArrow(f.source_document_id,f.source_location,`Открыть источник для поля «${f.label}»`,docs.find(doc=>doc.id===f.source_document_id)?.filename)}
             <button className={f.confirmed?"confirmed":""} onClick={()=>saveField(f,f.value||"")}>{f.confirmed?"✓ Подтверждено":"Подтвердить"}</button>
           </div>
-          <details><summary>Источник</summary><p className="sourceReference"><b>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote></details>
+          <details><summary>Цитата в документе</summary><p className="sourceReference"><b>{f.source_document_id?<button type="button" className="sourceFileLink" onClick={()=>void openDoc(f.source_document_id!,f.source_location||undefined)}>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Открыть документ"}</button>:"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote></details>
         </div>)}
       </div>
     </section>}
@@ -449,35 +482,36 @@ export default function Home(){
         {areaComponents.length>0&&<div className="areaComponents">
           <div className="sectionHead"><div><h3>Площади по адресам и видам работ</h3><p className="muted">Адреса и вид уборки извлечены из ТЗ. Выработка подставляется из внутреннего справочника, если найдена подходящая ставка.</p></div></div>
           <div className="areaTotal"><span>Суммарная площадь без строк «Итого»</span><b>{appSettings?fmt(areaComponents.reduce((sum,item)=>sum+item.area_m2,0),appSettings.display_locale,appSettings.display_number_max_fraction_digits):areaComponents.reduce((sum,item)=>sum+item.area_m2,0)} м²</b></div>
-          <details className="areaSource"><summary>Как выбирается выработка</summary><p>Она зависит от вида уборки и механизации, состава операций и их периодичности, типа помещений, загруженности мебелью, планировки и переходов между объектами. Единой ставки для всех работ нет.</p><p>800 м²/смену — имеющаяся демонстрационная упрощённая ставка для регулярной уборки помещений. Проверьте её по вашему прайсу или хронометражу; для уборки снега значение нужно задать отдельно.</p></details>
           {areaComponents.map(component=><div className="areaComponent" key={component.id}>
-            <div className="areaComponentTitle"><b>{component.address}</b><span>{component.area_type} · {component.work_type}</span></div>
-            <div className="areaComponentInputs">
+            <div className="areaComponentTitle"><b>{component.address}</b><span className="workTypeValue"><strong>{component.work_type}</strong>{sourceArrow(component.work_type_source_document_id,component.work_type_source_location,`Открыть источник вида работ для адреса ${component.address}`,docs.find(doc=>doc.id===component.work_type_source_document_id)?.filename)}</span><small>{component.area_type}</small></div>
+            <div className="areaLineInputs">
               <label><span className="areaMeasureLabel">Площадь, м²{sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})}/></label>
               <div className="productivityField">
                 <div className="productivityFieldLabel"><label htmlFor={`productivity-${component.id}`}>Выработка, м²/смену</label><button type="button" className="helpIcon" aria-label={`Пояснить выработку для адреса ${component.address}`} title="Что означает выработка?" onClick={()=>setProductivityHelp(component)}>i</button></div>
                 <input id={`productivity-${component.id}`} type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Нет ставки для этого вида работ" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/>
               </div>
-            </div>
-            {component.productivity_reference&&<p className="fieldHint">Предварительная ставка из справочника «{component.productivity_reference.name}»: {component.productivity_reference.value} {component.productivity_reference.unit}. {component.productivity_reference.notes||""} Проверьте её и при необходимости замените.</p>}
-            {!(component.productivity_m2_per_shift&&component.productivity_m2_per_shift>0)&&<p className="warning">{component.productivity_reference?"Введите положительную выработку для этой строки.":"В справочнике нет выработки для этого вида работ. Введите значение из вашего прайса или внутренней нормы."}</p>}
-            <div className="areaSchedule">
-              <div><h4>Режим уборки и смены</h4><p className="muted">Периодичность берётся из ТЗ. Для фиксированного режима смены в месяц рассчитываются автоматически.</p></div>
-              <label><span>Режим</span><select value={component.schedule_mode} onChange={e=>updateScheduleMode(component.id,e.target.value as ScheduleMode)}>
+              <label><span>Режим{sourceArrow(component.schedule_source_document_id,component.schedule_source_location,`Открыть источник режима для адреса ${component.address}`,component.schedule_source_document_name||"Источник режима")}</span><select value={component.schedule_mode} onChange={e=>updateScheduleMode(component.id,e.target.value as ScheduleMode)}>
                 <option value="daily">Каждый рабочий день</option><option value="weekly">Еженедельно</option><option value="monthly">Ежемесячно</option>
                 <option value="on_request">По разовым заявкам</option><option value="custom">Другой режим — ввести число смен</option><option value="unspecified">В ТЗ не указан — ввести число смен</option>
               </select></label>
               <label><span>{component.schedule_mode==="on_request"?"Заявок/выездов в месяц":"Смен в месяц"}</span><input type="number" min="0" step="any" value={shiftsForMode(component.schedule_mode,appSettings)??component.shifts_per_month??""} readOnly={shiftsForMode(component.schedule_mode,appSettings)!==null} placeholder="Укажите ожидаемое число" onChange={e=>updateAreaComponent(component.id,{shifts_per_month:e.target.value?Number(e.target.value):null})}/></label>
-              <p className="fieldHint">{scheduleCountHint(component.schedule_mode,appSettings)}{(component.schedule_additional_frequencies?.length??0)>0?" Дополнительные еженедельные/ежемесячные операции показаны отдельно; их трудоёмкость здесь не прибавляется как отдельные смены.":""}</p>
+            </div>
+            {component.productivity_reference&&<p className="fieldHint">Ставка из справочника «{component.productivity_reference.name.replace(/\bMVP\b/gi,"").trim()}»: {component.productivity_reference.value} {component.productivity_reference.unit}. Проверьте её и при необходимости замените.</p>}
+            {!(component.productivity_m2_per_shift&&component.productivity_m2_per_shift>0)&&<p className="warning">{component.productivity_reference?"Введите положительную выработку для этой строки.":"В справочнике нет выработки для этого вида работ. Введите значение из вашего прайса или внутренней нормы."}</p>}
+            <div className="areaSchedule">
               {component.schedule_status==="needs_input"&&<p className="warning">График в ТЗ не найден. Выберите режим уборки; если он не регулярный, укажите ожидаемое число смен.</p>}
               {component.schedule_warnings?.map((warning,index)=><p className="warning" key={index}>{warning}</p>)}
               {component.schedule_mode==="on_request"&&(component.shifts_per_month||0)<=0&&<p className="warning">ТЗ задаёт уборку по заявкам, но количество заявок в месяц не определено. Укажите ожидаемое число выездов.</p>}
-              {component.schedule_source_fragment&&<details className="areaSource"><summary>Источник режима в ТЗ: {component.schedule_source_document_name}</summary><p>{sourceLocationLabel(component.schedule_source_location,docs.find(doc=>doc.id===component.schedule_source_document_id)?.parser)}</p><blockquote>{component.schedule_source_fragment}</blockquote></details>}
             </div>
-            <details className="areaSource"><summary>Источник площади</summary><p>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</p><blockquote>{component.source_fragment}</blockquote></details>
-            {component.work_type_source_fragment&&<details className="areaSource"><summary>Источник вида работ</summary><p>{component.work_type_source_location} · {docs.find(doc=>doc.id===component.work_type_source_document_id)?.filename}</p><blockquote>{component.work_type_source_fragment}</blockquote></details>}
             {component.curation_warnings?.length?<p className="warning">Проверка строки: {component.curation_warnings.join("; ")}</p>:null}
           </div>)}
+          {calc?.components?.length&&appSettings&&<div className="areaResults">
+            <h3>Расчёт по адресам и видам работ</h3>
+            <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Выработка</th><th>Режим</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
+              {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.work_type}</small></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² {sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</td><td>{component.productivity_m2_per_shift} м²/смену</td><td>{component.schedule_label} {sourceArrow(component.schedule_source_document_id,component.schedule_source_location,`Открыть источник режима для адреса ${component.address}`,component.schedule_source_document_name||"Источник режима")}</td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
+            </tbody></table></div>
+            <p className="areaResultsTotal">Итого: {fmt(calc.total_area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² · {fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} чел.-часов/мес. · {calc.physical_staff_by_site} сотрудников</p>
+          </div>}
         </div>}
         <label className="calculationConfirmation"><input type="checkbox" checked={calculationConfirmed} disabled={!calculationInputsReady} onChange={e=>setCalculationConfirmed(e.target.checked)}/><span><b>Подтверждаю расчёт целиком</b><small>Проверены площади и источники, режимы уборки, ставки выработки и параметры трудоёмкости. При их изменении подтверждение сбросится. Финансовые параметры можно менять и пересчитывать на вкладке «Экономика».</small></span></label>
         <button className="primary" disabled={!criticalReady} onClick={calculate}>Рассчитать трудоёмкость и экономику</button>
@@ -488,15 +522,7 @@ export default function Home(){
     </section>}
 
     {active==="economics"&&<section className="panel">
-      <div className="sectionHead"><div><h2>Экономика контракта</h2><p className="muted">Все показатели считает детерминированный Python-модуль.</p></div><button onClick={()=>setActive("decision")}>К решению →</button></div>
-      {calc?.components?.length&&appSettings&&<div className="areaResults">
-        <h3>Трудоёмкость по адресам и видам уборки</h3>
-        <p className="muted">Расчёт использует подтверждённую для каждой строки площадь, выработку и число смен. Экономика ниже считается по общей площади сделки.</p>
-        <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Выработка</th><th>Режим и источник</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
-          {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.area_type} · {component.work_type}</small><details><summary>Цитата из документа</summary><small>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</small><blockquote>{component.source_fragment}</blockquote></details></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²{sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</td><td>{component.productivity_m2_per_shift} м²/смену<small>{component.productivity_reference?.name||"Введено вручную"}</small></td><td><b>{component.schedule_label}</b><small>{component.schedule_mode==="on_request"?"Оценка заявок/мес.":"Смен/мес."}</small><details><summary>{component.schedule_source_document_name||"Режим уборки"} · {sourceLocationLabel(component.schedule_source_location,docs.find(doc=>doc.id===component.schedule_source_document_id)?.parser)}</summary><blockquote>{component.schedule_source_fragment||"Режим задан вручную"}</blockquote></details></td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
-        </tbody></table></div>
-        <p className="areaResultsTotal">По площадкам: {fmt(calc.total_area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² · {fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} чел.-часов/мес. · {calc.physical_staff_by_site} сотрудников</p>
-      </div>}
+      <div className="sectionHead"><div><h2>Экономика контракта</h2><p className="muted">Итоги по сделке и финансовым параметрам.</p></div></div>
       <div className="economicsGrid">
         <div className="controls">
           {[
@@ -517,20 +543,35 @@ export default function Home(){
           {calculationDirty&&calc&&<p className="warning">Параметры изменены. Показан предыдущий результат — нажмите «Пересчитать».</p>}
         </div>
         {calc?<div className="kpis">
+          <div><span>Площадь по всем строкам</span><b>{appSettings?fmt(calc.total_area_m2||calc.area_m2||form?.area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)+" м²":(calc.total_area_m2||form?.area_m2||0)+" м²"}</b></div>
+          <div><span>Трудозатраты в месяц</span><b>{appSettings?fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)+" ч":calc.labor_hours_month+" ч"}</b></div>
+          <div><span>Штатная численность</span><b>{appSettings?fmt(calc.fte,appSettings.display_locale,appSettings.display_number_max_fraction_digits):calc.fte} FTE</b></div>
+          <div><span>Сотрудников с замещением</span><b>{calc.physical_staff_by_site??calc.physical_staff}</b></div>
           <div><span>Выручка без НДС</span><b>{appSettings?money(calc.revenue_net,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.revenue_net}</b></div>
           <div><span>Полная себестоимость</span><b>{appSettings?money(calc.full_cost,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.full_cost}</b></div>
           <div><span>Прибыль</span><b>{appSettings?money(calc.profit,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.profit}</b></div>
           <div><span>Маржа</span><b className={appSettings&&calc.margin<appSettings.no_bid_margin_threshold?"badText":calc.margin<(form?.target_margin??calc.margin)?"warnText":"goodText"}>{appSettings?((calc.margin*appSettings.display_percentage_factor).toFixed(appSettings.display_percentage_decimal_places)+"%"):calc.margin}</b></div>
-          <div><span>Break-even</span><b>{appSettings?fmt(calc.break_even_price_per_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)+" "+appSettings.currency_unit_symbol+"/м²":calc.break_even_price_per_m2}</b></div>
+          <div><span>Тариф безубыточности</span><b>{appSettings?fmt(calc.break_even_price_per_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)+" "+appSettings.currency_unit_symbol+"/м²":calc.break_even_price_per_m2}</b></div>
           <div><span>Тариф для цели</span><b>{appSettings?fmt(calc.target_price_per_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)+" "+appSettings.currency_unit_symbol+"/м²":calc.target_price_per_m2}</b></div>
         </div>:<div className="empty">Сначала настройте и подтвердите исходные данные на вкладке «Трудоёмкость».</div>}
       </div>
-      {calc&&appSettings&&<div className="sensitivity"><h3>Чувствительность к цене</h3>{calc.sensitivity.map(s=><div key={s.delta} className="sens"><span>{s.delta===0?appSettings.base_sensitivity_label:((s.delta>0?"+":"")+Math.round(s.delta*appSettings.display_percentage_factor)+"%")}</span><i style={{width:String(Math.max(appSettings.sensitivity_bar_min_width,Math.min(appSettings.sensitivity_bar_max_width,(s.margin+appSettings.sensitivity_bar_margin_offset)*appSettings.sensitivity_bar_scale))+"%")}}></i><b>{(s.margin*appSettings.display_percentage_factor).toFixed(appSettings.display_percentage_decimal_places)+"%"}</b></div>)}</div>}
+      {calc&&<><div className={"decisionHero "+statusClass}><span>Коммерческое решение</span><b>{calc.decision}</b></div>{calc.conditions.length>0&&<div className="conditions"><h3>Условия</h3>{calc.conditions.map(c=><p key={c}>• {c}</p>)}</div>}</>}
+      {calc&&appSettings&&<div className="sensitivity"><h3>Чувствительность к цене <button type="button" className="helpIcon" aria-label="Пояснить чувствительность к цене" title="Что показывает этот график?" onClick={()=>setSensitivityHelp(true)}>i</button></h3>{calc.sensitivity.map(s=><div key={s.delta} className="sens"><span>{s.delta===0?appSettings.base_sensitivity_label:((s.delta>0?"+":"")+Math.round(s.delta*appSettings.display_percentage_factor)+"%")}</span><i style={{width:String(Math.max(appSettings.sensitivity_bar_min_width,Math.min(appSettings.sensitivity_bar_max_width,(s.margin+appSettings.sensitivity_bar_margin_offset)*appSettings.sensitivity_bar_scale))+"%")}}></i><b>{(s.margin*appSettings.display_percentage_factor).toFixed(appSettings.display_percentage_decimal_places)+"%"}</b></div>)}</div>}
     </section>}
 
-    {active==="decision"&&<section className="panel decision">
-      <h2>Коммерческое решение</h2>
-      {calc?<><div className={"decisionHero "+statusClass}><span>Решение системы</span><b>{calc.decision}</b></div>{calc.conditions.length>0&&<div className="conditions"><h3>Условия</h3>{calc.conditions.map(c=><p key={c}>• {c}</p>)}</div>}<p className="muted">LLM может объяснять решение, но статус задаётся правилами расчётного модуля.</p></>:<div className="empty">Сначала выполните расчёт.</div>}
+    {active==="proposal"&&<section className="panel proposalPanel">
+      <div className="sectionHead"><div><h2>Коммерческое предложение</h2><p className="muted">Заполните реквизиты и скачайте редактируемый файл Word. В документ попадут подтверждённые требования и последний расчёт.</p></div></div>
+      {!calc?<div className="empty">Сначала завершите и подтвердите расчёт на вкладке «Трудоёмкость».</div>:<>
+        <div className="proposalForm">
+          <label>Заказчик<input value={proposalForm.customer_name} onChange={e=>setProposalForm({...proposalForm,customer_name:e.target.value})} placeholder="Название организации"/></label>
+          <label>Исполнитель<input value={proposalForm.supplier_name} onChange={e=>setProposalForm({...proposalForm,supplier_name:e.target.value})} placeholder="Название вашей организации"/></label>
+          <label>Контакты<input value={proposalForm.contact_details} onChange={e=>setProposalForm({...proposalForm,contact_details:e.target.value})} placeholder="Телефон, почта"/></label>
+          <label>Срок действия, дней<input type="number" min="1" max="365" value={proposalForm.validity_days} onChange={e=>setProposalForm({...proposalForm,validity_days:Number(e.target.value)})}/></label>
+          <label className="proposalWide">Дополнительные условия<textarea rows={3} value={proposalForm.additional_terms} onChange={e=>setProposalForm({...proposalForm,additional_terms:e.target.value})} placeholder="Условия оплаты, сроки начала работ и другие согласованные детали"/></label>
+        </div>
+        <div className="proposalPreview"><h3>Предварительный состав КП</h3><p><b>{proposalForm.customer_name||"[указать заказчика]"}</b> · {proposalForm.supplier_name||"[указать исполнителя]"}</p><p>{calc.components?.length||areaComponents.length} строк адресов и видов работ · {fmt(calc.total_area_m2||calc.components?.reduce((sum,item)=>sum+item.area_m2,0)||form?.area_m2||0,appSettings?.display_locale||"ru-RU",appSettings?.display_number_max_fraction_digits||1)} м²</p><p>Стоимость: {appSettings?money(calc.revenue_with_vat,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.revenue_with_vat} в месяц · срок {proposalContractMonths} мес.</p><p className="muted">Данные КП проверяются отдельно от внутренней экономики: маржа и себестоимость в файл не включаются.</p></div>
+        <button className="primary" disabled={busy} onClick={downloadProposal}>Скачать проект КП (.docx)</button>
+      </>}
     </section>}
 
     {active==="pipeline"&&<section className="panel">
@@ -538,6 +579,11 @@ export default function Home(){
       <p className="muted">Для каждого шага доступны вход, выход, длительность и предупреждения.</p>
       {runs.length===0?<div className="empty">Пока нет запусков.</div>:runs.map(run=><div className="run" key={run.id}><h3>{"Запуск #"+run.id+" · "+run.status}</h3>{run.steps.map((s,i)=><details className={"step "+s.status} key={i}><summary><span>{(s.status==="success"?"✓":s.status==="failed"?"✕":"○")+" "+s.name}</span><small>{s.duration_ms?String(s.duration_ms)+" ms":""}</small></summary><div className="stepBody">{s.warnings?.map(w=><p className="warning" key={w}>{w}</p>)}<div className="json"><b>Вход</b><pre>{JSON.stringify(s.input,null,2)}</pre></div><div className="json"><b>Выход</b><pre>{JSON.stringify(s.output,null,2)}</pre></div></div></details>)}</div>)}
     </section>}
+        {active!=="pipeline"&&<nav className="stageNav" aria-label="Переход между этапами">
+          <button type="button" onClick={()=>moveStage(-1)} disabled={stageIndex<=0}>← Назад</button>
+          <span>Этап {stageIndex+1} из {tabs.length}</span>
+          <button type="button" className="primary" onClick={()=>moveStage(1)} disabled={stageIndex>=tabs.length-1}>Далее →</button>
+        </nav>}
       </div>
       {productivityHelp&&<div className="modalBackdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setProductivityHelp(null)}}>
         <section className="productivityModal" role="dialog" aria-modal="true" aria-labelledby="productivity-modal-title" tabIndex={-1} onKeyDown={event=>{if(event.key==="Escape")setProductivityHelp(null)}}>
@@ -548,16 +594,24 @@ export default function Home(){
           <div className="productivityFormula">Площадь ÷ выработка × часов в смене × смен/выездов в месяц = трудозатраты за месяц</div>
           {productivityHelpNumbers&&appSettings&&<div className="productivityCalculation">
             <h3>Пример для этой строки</h3>
-            <p>{fmt(productivityHelp.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² ÷ {fmt(productivityHelpNumbers.rate,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²/смену = <b>{fmt(productivityHelpNumbers.employeeShiftsPerVisit,appSettings.display_locale,2)} смен одного сотрудника на одну уборку</b>.</p>
-            <p>Это примерно <b>{fmt(productivityHelpNumbers.hoursPerVisit,appSettings.display_locale,1)} человеко-часов за одну уборку</b> при {fmt(appSettings.hours_per_shift,appSettings.display_locale,1)} часах в смене.</p>
-            {productivityHelpNumbers.hoursPerMonth!==null&&<p>При режиме «{productivityHelp.schedule_label}» ({fmt(productivityHelpNumbers.monthlyVisits??0,appSettings.display_locale,1)} смен/выездов в месяц) получится около <b>{fmt(productivityHelpNumbers.hoursPerMonth,appSettings.display_locale,1)} человеко-часов в месяц</b> или {fmt(productivityHelpNumbers.fte??0,appSettings.display_locale,2)} FTE до коэффициента замещения.</p>}
-            {productivityHelpNumbers.hoursPerMonth===null&&<p className="warning">Месячный итог появится после ввода ожидаемого числа выездов или смен.</p>}
+            <p>{fmt(productivityHelp.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² ÷ {fmt(productivityHelpNumbers.rate,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²/смену = <b>{fmt(productivityHelpNumbers.employeeShiftsPerVisit,appSettings.display_locale,2)} смены сотрудника на одну уборку</b>; при {fmt(appSettings.hours_per_shift,appSettings.display_locale,1)} часах в смене это около <b>{fmt(productivityHelpNumbers.hoursPerVisit,appSettings.display_locale,1)} чел.-часа</b>.</p>
+            {productivityHelpNumbers.hoursPerMonth!==null&&<p>По режиму «{productivityHelp.schedule_label}» ({fmt(productivityHelpNumbers.monthlyVisits??0,appSettings.display_locale,1)} смен/выездов в месяц): <b>{fmt(productivityHelpNumbers.hoursPerMonth,appSettings.display_locale,1)} чел.-часа/мес.</b> · {fmt(productivityHelpNumbers.fte??0,appSettings.display_locale,2)} штатной единицы до коэффициента замещения.</p>}
+            {productivityHelpNumbers.hoursPerMonth===null&&<p className="warning">Месячный итог появится после ввода числа выездов или смен.</p>}
           </div>}
           {!productivityHelpNumbers&&<p className="warning">Чтобы показать расчёт для этой строки, введите положительную выработку в поле.</p>}
-          <p className="muted">Чем больше выработка, тем меньше расчётные трудозатраты и потребность в сотрудниках; чем меньше — тем больше. Ставка зависит от вида работ, механизации, состава операций и условий объекта.</p>
-          {productivityHelp.productivity_reference&&<p className="modalNote">Источник ставки: «{productivityHelp.productivity_reference.name}». {productivityHelp.productivity_reference.notes||""} Проверьте демо-значение по прайсу или внутренней норме.</p>}
+          <p className="muted">Чем выше ставка, тем меньше расчётные затраты времени. Она зависит от вида работ, механизации и условий объекта.</p>
+          {productivityHelp.productivity_reference&&<p className="modalNote">Источник ставки: «{productivityHelp.productivity_reference.name.replace(/\bMVP\b/gi,"").trim()}». Сверьте её с прайсом или внутренней нормой.</p>}
           {!productivityHelp.productivity_reference&&<p className="modalNote">Ставка введена вручную. Используйте значение из прайса, внутренней нормы или хронометража.</p>}
           <button type="button" className="primary modalAction" onClick={()=>setProductivityHelp(null)}>Понятно</button>
+        </section>
+      </div>}
+      {sensitivityHelp&&<div className="modalBackdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setSensitivityHelp(false)}}>
+        <section className="helpModal" role="dialog" aria-modal="true" aria-labelledby="sensitivity-modal-title">
+          <button type="button" className="modalClose" aria-label="Закрыть пояснение" onClick={()=>setSensitivityHelp(false)}>×</button>
+          <p className="modalEyebrow">ПОЯСНЕНИЕ К РАСЧЁТУ</p><h2 id="sensitivity-modal-title">Чувствительность к цене</h2>
+          <p>График показывает, как меняется маржа, если месячный тариф за квадратный метр отклонить от текущего.</p>
+          <ul><li>«База» — маржа при введённом тарифе.</li><li>Значения со знаком минус показывают снижение тарифа, со знаком плюс — повышение.</li><li>Проценты справа — расчётная маржа после такого изменения.</li></ul>
+          <button type="button" className="primary modalAction" onClick={()=>setSensitivityHelp(false)}>Понятно</button>
         </section>
       </div>}
     </main>
