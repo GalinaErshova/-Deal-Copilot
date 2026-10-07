@@ -144,6 +144,13 @@ class ManualAreaFieldRequest(BaseModel):
 
 class ProposalExportRequest(BaseModel):
     customer_name: str = Field(default="", max_length=250)
+    customer_address: str = Field(default="", max_length=500)
+    customer_inn: str = Field(default="", max_length=12)
+    customer_kpp: str = Field(default="", max_length=9)
+    customer_ogrn: str = Field(default="", max_length=15)
+    customer_contact_person: str = Field(default="", max_length=250)
+    customer_phone: str = Field(default="", max_length=100)
+    customer_email: str = Field(default="", max_length=250)
     supplier_name: str = Field(default="", max_length=250)
     contact_details: str = Field(default="", max_length=500)
     validity_days: int = Field(default=10, ge=1, le=365)

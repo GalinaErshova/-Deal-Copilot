@@ -11,6 +11,8 @@ type Step={name:string;status:string;duration_ms?:number;input?:unknown;output?:
 type Run={id:number;status:string;steps:Step[]};
 type ParsedBlock={kind:string;text:string;path:string;page_no?:number;title?:string;rows?:string[][]};
 type ParsedDocument={parser:string;blocks:ParsedBlock[];warnings?:string[]};
+type OrganizationSource={value:string;document_id:number;document_name:string;source_location:string;source_fragment:string};
+type OrganizationProfile=Record<string,OrganizationSource>;
 type ProcessProgress={value:number;label:string};
 type ScheduleMode="daily"|"weekly"|"monthly"|"on_request"|"custom"|"unspecified";
 type AreaComponent={id:string;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;labor_hours_month?:number;fte?:number;physical_staff?:number};
@@ -97,7 +99,9 @@ export default function Home(){
   const [sidebarCollapsed,setSidebarCollapsed]=useState(false);
   const [documentsCollapsed,setDocumentsCollapsed]=useState(false);
   const [sensitivityHelp,setSensitivityHelp]=useState(false);
-  const [proposalForm,setProposalForm]=useState({customer_name:"",supplier_name:"",contact_details:"",validity_days:10,additional_terms:""});
+  const [proposalForm,setProposalForm]=useState({customer_name:"",customer_address:"",customer_inn:"",customer_kpp:"",customer_ogrn:"",customer_contact_person:"",customer_phone:"",customer_email:"",supplier_name:"",contact_details:"",validity_days:10,additional_terms:""});
+  const [organizationProfile,setOrganizationProfile]=useState<OrganizationProfile>({});
+  const [proposalTouched,setProposalTouched]=useState<Set<string>>(new Set());
   const [busy,setBusy]=useState(false);
   const [selectedDoc,setSelectedDoc]=useState<number|null>(null);
   const [parsed,setParsed]=useState<any>(null);
@@ -129,7 +133,8 @@ export default function Home(){
       req("/deals/"+deal.id+"/fields"),
       req("/deals/"+deal.id+"/pipeline"),
       req("/deals/"+deal.id+"/area-components"),
-      req("/deals/"+deal.id+"/calculations")
+      req("/deals/"+deal.id+"/calculations"),
+      req("/deals/"+deal.id+"/organization-profile")
     ]);
     setDocs(all[0]);setFields(all[1]);setRuns(all[2]);
     const latestCalculation=all[4]?.[0];
@@ -145,6 +150,7 @@ export default function Home(){
         schedule_mode:previous?.schedule_mode??source.schedule_mode,
         shifts_per_month:previous?.shifts_per_month??source.shifts_per_month};
     }));
+    setOrganizationProfile(all[5]||{});
   }
   useEffect(()=>{
     Promise.all([req("/settings"),req("/deals")]).then(([s,deals]:[AppSettings,Deal[]])=>{
@@ -158,6 +164,16 @@ export default function Home(){
     }).catch((e:any)=>setError(e.message));
   },[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
+  useEffect(()=>{
+    const profileFields=["customer_name","customer_address","customer_inn","customer_kpp","customer_ogrn","customer_contact_person","customer_phone","customer_email"] as const;
+    setProposalForm(current=>{
+      const next={...current};
+      profileFields.forEach(key=>{
+        if(!proposalTouched.has(key)&&!next[key]&&organizationProfile[key]?.value)next[key]=organizationProfile[key].value;
+      });
+      return next;
+    });
+  },[organizationProfile,proposalTouched]);
   useEffect(()=>{
     if(!productivityHelp&&!sensitivityHelp)return;
     const previousOverflow=document.body.style.overflow;
@@ -255,6 +271,14 @@ export default function Home(){
     return <button type="button" className="sourceJump" aria-label={label} title={title||label} onClick={()=>{void openDoc(id,path)}}>
       <svg aria-hidden="true" viewBox="0 0 20 20" fill="none"><path d="M3.5 10h12m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
     </button>;
+  }
+  function updateProposalField(key:string,value:string|number){
+    setProposalTouched(current=>new Set(current).add(key));
+    setProposalForm(current=>({...current,[key]:value}));
+  }
+  function organizationSource(key:string,label:string){
+    const source=organizationProfile[key];
+    return sourceArrow(source?.document_id,source?.source_location,`Открыть источник: ${label}`,source?`${source.document_name} · ${source.source_fragment}`:label);
   }
   async function saveField(row:Field,value:string){
     await req("/fields/"+row.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:value,confirmed:true})});
@@ -562,12 +586,20 @@ export default function Home(){
     {active==="proposal"&&<section className="panel proposalPanel">
       <div className="sectionHead"><div><h2>Коммерческое предложение</h2><p className="muted">Заполните реквизиты и скачайте редактируемый файл Word. В документ попадут подтверждённые требования и последний расчёт.</p></div></div>
       {!calc?<div className="empty">Сначала завершите и подтвердите расчёт на вкладке «Трудоёмкость».</div>:<>
+        <p className="muted">Реквизиты заказчика подставлены из тендерных документов, если найдены. Стрелка рядом с полем открывает подтверждающий фрагмент; значения можно исправить вручную.</p>
         <div className="proposalForm">
-          <label>Заказчик<input value={proposalForm.customer_name} onChange={e=>setProposalForm({...proposalForm,customer_name:e.target.value})} placeholder="Название организации"/></label>
-          <label>Исполнитель<input value={proposalForm.supplier_name} onChange={e=>setProposalForm({...proposalForm,supplier_name:e.target.value})} placeholder="Название вашей организации"/></label>
-          <label>Контакты<input value={proposalForm.contact_details} onChange={e=>setProposalForm({...proposalForm,contact_details:e.target.value})} placeholder="Телефон, почта"/></label>
-          <label>Срок действия, дней<input type="number" min="1" max="365" value={proposalForm.validity_days} onChange={e=>setProposalForm({...proposalForm,validity_days:Number(e.target.value)})}/></label>
-          <label className="proposalWide">Дополнительные условия<textarea rows={3} value={proposalForm.additional_terms} onChange={e=>setProposalForm({...proposalForm,additional_terms:e.target.value})} placeholder="Условия оплаты, сроки начала работ и другие согласованные детали"/></label>
+          <label>Заказчик {organizationSource("customer_name","название заказчика")}<input value={proposalForm.customer_name} onChange={e=>updateProposalField("customer_name",e.target.value)} placeholder="Название организации"/></label>
+          <label>Юридический адрес {organizationSource("customer_address","адрес заказчика")}<input value={proposalForm.customer_address} onChange={e=>updateProposalField("customer_address",e.target.value)} placeholder="Адрес заказчика"/></label>
+          <label>ИНН {organizationSource("customer_inn","ИНН заказчика")}<input value={proposalForm.customer_inn} onChange={e=>updateProposalField("customer_inn",e.target.value)} placeholder="ИНН"/></label>
+          <label>КПП {organizationSource("customer_kpp","КПП заказчика")}<input value={proposalForm.customer_kpp} onChange={e=>updateProposalField("customer_kpp",e.target.value)} placeholder="КПП"/></label>
+          <label>ОГРН {organizationSource("customer_ogrn","ОГРН заказчика")}<input value={proposalForm.customer_ogrn} onChange={e=>updateProposalField("customer_ogrn",e.target.value)} placeholder="ОГРН"/></label>
+          <label>Представитель заказчика {organizationSource("customer_contact_person","представитель заказчика")}<input value={proposalForm.customer_contact_person} onChange={e=>updateProposalField("customer_contact_person",e.target.value)} placeholder="Фамилия, имя, отчество"/></label>
+          <label>Телефон заказчика {organizationSource("customer_phone","телефон заказчика")}<input value={proposalForm.customer_phone} onChange={e=>updateProposalField("customer_phone",e.target.value)} placeholder="Телефон"/></label>
+          <label>Электронная почта заказчика {organizationSource("customer_email","электронная почта заказчика")}<input value={proposalForm.customer_email} onChange={e=>updateProposalField("customer_email",e.target.value)} placeholder="Почта"/></label>
+          <label>Исполнитель<input value={proposalForm.supplier_name} onChange={e=>updateProposalField("supplier_name",e.target.value)} placeholder="Название вашей организации"/></label>
+          <label>Контакты исполнителя<input value={proposalForm.contact_details} onChange={e=>updateProposalField("contact_details",e.target.value)} placeholder="Телефон, почта"/></label>
+          <label>Срок действия, дней<input type="number" min="1" max="365" value={proposalForm.validity_days} onChange={e=>updateProposalField("validity_days",Number(e.target.value))}/></label>
+          <label className="proposalWide">Дополнительные условия<textarea rows={3} value={proposalForm.additional_terms} onChange={e=>updateProposalField("additional_terms",e.target.value)} placeholder="Условия оплаты, сроки начала работ и другие согласованные детали"/></label>
         </div>
         <div className="proposalPreview"><h3>Предварительный состав КП</h3><p><b>{proposalForm.customer_name||"[указать заказчика]"}</b> · {proposalForm.supplier_name||"[указать исполнителя]"}</p><p>{calc.components?.length||areaComponents.length} строк адресов и видов работ · {fmt(calc.total_area_m2||calc.components?.reduce((sum,item)=>sum+item.area_m2,0)||form?.area_m2||0,appSettings?.display_locale||"ru-RU",appSettings?.display_number_max_fraction_digits||1)} м²</p><p>Стоимость: {appSettings?money(calc.revenue_with_vat,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.revenue_with_vat} в месяц · срок {proposalContractMonths} мес.</p><p className="muted">Данные КП проверяются отдельно от внутренней экономики: маржа и себестоимость в файл не включаются.</p></div>
         <button className="primary" disabled={busy} onClick={downloadProposal}>Скачать проект КП (.docx)</button>

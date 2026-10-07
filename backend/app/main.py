@@ -26,6 +26,7 @@ from .models import (
     ReferenceRate,
     utc_now_naive,
 )
+from .organization_extractor import extract_organization_profile
 from .pricing import calculate
 from .schemas import (
     CalculationBreakdownRequest,
@@ -328,6 +329,13 @@ def documents(deal_id:int, db: Session=Depends(get_db)):
     return [{"id":d.id,"filename":d.filename,"parser":d.parser,"confidence":d.parse_confidence,
              "status":d.parse_status,"warnings":(json.loads(d.parse_json).get("warnings",[]) if d.parse_json else [])} for d in docs]
 
+@app.get("/api/deals/{deal_id}/organization-profile")
+def organization_profile(deal_id:int, db:Session=Depends(get_db)):
+    """Ищет реквизиты заказчика в уже разобранных документах и возвращает ссылки на источники."""
+    if not db.get(Deal,deal_id): raise HTTPException(404,"Deal not found")
+    docs=db.query(Document).filter(Document.deal_id==deal_id).order_by(Document.id).all()
+    return extract_organization_profile(docs)
+
 @app.get("/api/documents/{document_id}/original")
 def document_original(document_id:int, db:Session=Depends(get_db)):
     doc=db.get(Document,document_id)
@@ -569,9 +577,19 @@ def export_proposal(deal_id:int,req:ProposalExportRequest,db:Session=Depends(get
     title=doc.add_heading("Коммерческое предложение",0)
     title.alignment=WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f"Заказчик: {req.customer_name.strip() or '[указать заказчика]'}")
+    for label,value in [
+        ("Юридический адрес",req.customer_address),
+        ("ИНН",req.customer_inn),
+        ("КПП",req.customer_kpp),
+        ("ОГРН",req.customer_ogrn),
+        ("Представитель заказчика",req.customer_contact_person),
+        ("Телефон заказчика",req.customer_phone),
+        ("Электронная почта заказчика",req.customer_email),
+    ]:
+        if value.strip(): doc.add_paragraph(f"{label}: {value.strip()}")
     doc.add_paragraph(f"Исполнитель: {req.supplier_name.strip() or '[указать исполнителя]'}")
     if req.contact_details.strip():
-        doc.add_paragraph(f"Контакты: {req.contact_details.strip()}")
+        doc.add_paragraph(f"Контакты исполнителя: {req.contact_details.strip()}")
     doc.add_paragraph(f"Предложение действительно {req.validity_days} календарных дней с даты подготовки.")
     doc.add_heading("Предмет предложения",level=1)
     doc.add_paragraph("Оказание услуг по уборке объектов на условиях и в объёме, указанных ниже.")
