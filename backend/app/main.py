@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import Base, SessionLocal, engine, get_db
-from .document_processing import parse_document
+from .document_processing import chunk_extraction_text, parse_document
 from .model_gateway import gateway
 from .models import (
     Calculation,
@@ -64,6 +64,75 @@ def _field_source_is_valid(field, parsed_document: dict) -> bool:
             return True
     return False
 
+
+def _merge_extractions(extractions: list[DealExtraction]) -> DealExtraction:
+    """Объединяет ответы по частям и отмечает разные значения одного поля."""
+    fields = []
+    missing_fields = []
+    contradictions = []
+    seen_fields = set()
+    seen_missing = set()
+    seen_contradictions = set()
+
+    for extraction in extractions:
+        for field in extraction.fields:
+            identity = (
+                field.key,
+                field.value,
+                field.unit,
+                field.source_document,
+                field.source_location,
+                field.source_fragment,
+            )
+            if identity not in seen_fields:
+                seen_fields.add(identity)
+                fields.append(field)
+        for missing in extraction.missing_fields:
+            if missing not in seen_missing:
+                seen_missing.add(missing)
+                missing_fields.append(missing)
+        for contradiction in extraction.contradictions:
+            identity = json.dumps(contradiction, ensure_ascii=False, sort_keys=True)
+            if identity not in seen_contradictions:
+                seen_contradictions.add(identity)
+                contradictions.append(contradiction)
+
+    by_key: dict[str, list] = {}
+    for field in fields:
+        by_key.setdefault(field.key, []).append(field)
+    for key, variants in by_key.items():
+        # Группируем по нормализованному значению и единице, чтобы сверить результаты разных частей.
+        value_pairs = {
+            ((field.value or "").strip().casefold(), (field.unit or "").strip().casefold())
+            for field in variants
+        }
+        if len(value_pairs) > 1:
+            contradiction = {
+                "key": key,
+                "values": [
+                    {
+                        "value": field.value,
+                        "unit": field.unit,
+                        "source_document": field.source_document,
+                        "source_location": field.source_location,
+                        "source_fragment": field.source_fragment,
+                    }
+                    for field in variants
+                ],
+            }
+            identity = json.dumps(contradiction, ensure_ascii=False, sort_keys=True)
+            if identity not in seen_contradictions:
+                seen_contradictions.add(identity)
+                contradictions.append(contradiction)
+
+    found_keys = set(by_key)
+    found_labels = {field.label.casefold() for field in fields}
+    missing_fields = [
+        item for item in missing_fields
+        if item not in found_keys and item.casefold() not in found_labels
+    ]
+    return DealExtraction(fields=fields, missing_fields=missing_fields, contradictions=contradictions)
+
 @app.get("/api/settings")
 def public_settings():
     return {
@@ -110,7 +179,17 @@ def create_deal(title: str = "Демо-тендер", db: Session = Depends(get_
 
 @app.get("/api/deals")
 def list_deals(db: Session = Depends(get_db)):
-    return [{"id":d.id,"title":d.title,"status":d.status,"created_at":d.created_at} for d in db.query(Deal).order_by(Deal.id.desc()).all()]
+    deals = db.query(Deal).order_by(Deal.id.desc()).all()
+    return [
+        {
+            "id": deal.id,
+            "title": deal.title,
+            "status": deal.status,
+            "created_at": deal.created_at,
+            "document_count": len(deal.documents),
+        }
+        for deal in deals
+    ]
 
 @app.post("/api/deals/{deal_id}/documents")
 async def upload_documents(deal_id: int, files: list[UploadFile] = File(...), db: Session = Depends(get_db)):
@@ -141,7 +220,7 @@ async def upload_documents(deal_id: int, files: list[UploadFile] = File(...), db
     accepted=[]
     for f, original_name, data in pending_files:
         filename = f"{uuid.uuid4().hex}_{Path(original_name).name}"
-        path = Path(settings.upload_dir)/filename
+        path = settings.resolve_path(settings.upload_dir) / filename
         path.write_bytes(data)
         doc = Document(deal_id=deal_id,filename=original_name,content_type=f.content_type or "",
                        file_path=str(path),parse_status="uploaded")
@@ -166,7 +245,7 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
             parsed=parse_document(
                 doc.filename,
                 doc.content_type,
-                Path(doc.file_path).read_bytes(),
+                settings.resolve_path(doc.file_path).read_bytes(),
                 max_spreadsheet_rows=settings.max_spreadsheet_rows,
             )
             doc.parser=parsed.parser; doc.parse_confidence=parsed.confidence
@@ -185,12 +264,18 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
     prompt_text="\n\n".join(combined)[:settings.max_extraction_chars]
     started=time.perf_counter()
     try:
-        extraction = gateway.structured(
-            task="extract_requirements",
-            system=settings.extraction_system_prompt,
-            user=prompt_text,
-            schema=DealExtraction,
-        )
+        local_model = settings.llm_provider == "local" and not settings.is_demo_mode
+        chunks = chunk_extraction_text(prompt_text, settings.llm_input_chunk_chars) if local_model else [prompt_text]
+        partial_extractions = [
+            gateway.structured(
+                task="extract_requirements",
+                system=settings.extraction_system_prompt,
+                user=chunk,
+                schema=DealExtraction,
+            )
+            for chunk in chunks
+        ]
+        extraction = _merge_extractions(partial_extractions) if len(partial_extractions) > 1 else partial_extractions[0]
     except Exception as exc:
         run.status="failed"; run.finished_at=utc_now_naive(); db.commit()
         add_step(db,run,"ai_extraction","failed",{"documents":len(docs)},
@@ -217,7 +302,7 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
                               source_document_id=source_doc.id if source_doc else None,
                               source_location=field.source_location,source_fragment=field.source_fragment))
     db.commit()
-    add_step(db,run,"ai_extraction","success",{"documents":len(docs)},
+    add_step(db,run,"ai_extraction","success",{"documents":len(docs), "chunks":len(chunks)},
              {**extraction.model_dump(),"prompt_version":settings.extraction_prompt_version},
              duration_ms=int((time.perf_counter()-started)*1000))
     run.status="success"; run.finished_at=utc_now_naive(); db.commit()
@@ -233,7 +318,7 @@ def documents(deal_id:int, db: Session=Depends(get_db)):
 def document_original(document_id:int, db:Session=Depends(get_db)):
     doc=db.get(Document,document_id)
     if not doc: raise HTTPException(404,"Document not found")
-    return FileResponse(doc.file_path,media_type=doc.content_type or "application/octet-stream",filename=doc.filename)
+    return FileResponse(settings.resolve_path(doc.file_path),media_type=doc.content_type or "application/octet-stream",filename=doc.filename)
 
 @app.get("/api/documents/{document_id}/parsed")
 def document_parsed(document_id:int, db:Session=Depends(get_db)):

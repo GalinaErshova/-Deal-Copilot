@@ -83,3 +83,33 @@ def test_docx_upload_processing_completes_in_mock_mode_without_invented_fields()
 
     pipeline = client.get(f"/api/deals/{deal_id}/pipeline").json()
     assert all(run["status"] == "success" for run in pipeline)
+
+
+def test_uploaded_documents_remain_available_when_model_extraction_fails(monkeypatch):
+    deal_id = create_deal()
+    document = WordDocument()
+    document.add_paragraph("Техническое задание на уборку офисного здания.")
+    binary = BytesIO()
+    document.save(binary)
+    uploaded = client.post(
+        f"/api/deals/{deal_id}/documents",
+        files=[("files", ("requirements.docx", binary.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))],
+    )
+    assert uploaded.status_code == 200
+
+    def fail_extraction(**_kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr("app.main.gateway.structured", fail_extraction)
+    processed = client.post(f"/api/deals/{deal_id}/process")
+
+    assert processed.status_code == 502
+    documents = client.get(f"/api/deals/{deal_id}/documents").json()
+    assert len(documents) == 1
+    assert documents[0]["status"] == "parsed"
+    original = client.get(f"/api/documents/{documents[0]['id']}/original")
+    assert original.status_code == 200
+    parsed = client.get(f"/api/documents/{documents[0]['id']}/parsed").json()
+    assert "Техническое задание" in parsed["blocks"][0]["text"]
+    deals = client.get("/api/deals").json()
+    assert next(deal for deal in deals if deal["id"] == deal_id)["document_count"] == 1

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import BACKEND_DIR, Settings
 
 
 def test_business_defaults_and_reference_rates_share_settings_values():
@@ -55,3 +55,18 @@ def test_backend_env_example_loads_as_valid_settings():
         "missing_fields": [],
         "contradictions": [],
     }
+
+
+def test_relative_sqlite_and_upload_paths_resolve_from_backend_directory():
+    configuration = Settings(
+        _env_file=None,
+        database_url="sqlite:///../.local-model/local_mimo_smoke.db",
+        data_dir="../.local-model",
+        upload_dir="../.local-model/uploads",
+    )
+
+    expected_db = (BACKEND_DIR / "../.local-model/local_mimo_smoke.db").resolve()
+    assert configuration.resolved_database_url == f"sqlite:///{expected_db.as_posix()}"
+    assert configuration.resolve_path(configuration.upload_dir) == (
+        BACKEND_DIR / "../.local-model/uploads"
+    ).resolve()

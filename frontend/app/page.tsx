@@ -4,7 +4,7 @@ import {useEffect,useState} from "react";
 
 const API=process.env.NEXT_PUBLIC_API_URL || "";
 
-type Deal={id:number;title:string;status:string};
+type Deal={id:number;title:string;status:string;document_count?:number};
 type Doc={id:number;filename:string;parser?:string;confidence?:string;status:string;warnings:string[]};
 type Field={id:number;key:string;label:string;value:string|null;unit?:string;confidence?:number;status:string;source_document_id?:number;source_location?:string;source_fragment?:string;confirmed:boolean};
 type Step={name:string;status:string;duration_ms?:number;input?:unknown;output?:unknown;warnings?:string[]};
@@ -35,7 +35,10 @@ export default function Home(){
   async function req(path:string, init?:RequestInit){
     if(!API) throw new Error("Настройте NEXT_PUBLIC_API_URL в frontend/.env.local");
     const r=await fetch(API+path,init);
-    if(!r.ok) throw new Error(await r.text());
+    if(!r.ok){
+      const body=await r.json().catch(()=>null);
+      throw new Error(body?.detail||body?.message||`Ошибка запроса (${r.status})`);
+    }
     return r.json();
   }
   async function refresh(){
@@ -48,7 +51,15 @@ export default function Home(){
     setDocs(all[0]);setFields(all[1]);setRuns(all[2]);
   }
   useEffect(()=>{
-    req("/settings").then((s:AppSettings)=>{setAppSettings(s);setForm(s.calculation_defaults)}).catch((e:any)=>setError(e.message));
+    Promise.all([req("/settings"),req("/deals")]).then(([s,deals]:[AppSettings,Deal[]])=>{
+      setAppSettings(s);setForm(s.calculation_defaults);
+      const savedId=Number(window.localStorage.getItem("dealCopilot.activeDealId"));
+      const selected=deals.find(d=>d.id===savedId)||deals.find(d=>(d.document_count||0)>0)||deals[0];
+      if(selected){
+        window.localStorage.setItem("dealCopilot.activeDealId",String(selected.id));
+        setDeal(selected);setActive((selected.document_count||0)>0?"documents":"upload");
+      }
+    }).catch((e:any)=>setError(e.message));
   },[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
 
@@ -56,6 +67,7 @@ export default function Home(){
     setBusy(true);setError("");
     try{
       const d=await req("/deals?title="+encodeURIComponent("Демо: регулярный клининг офиса"),{method:"POST"});
+      window.localStorage.setItem("dealCopilot.activeDealId",String(d.id));
       setDeal(d);setDocs([]);setFields([]);setRuns([]);setCalc(null);setActive("upload");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
@@ -65,8 +77,9 @@ export default function Home(){
     setBusy(true);setError("");
     try{
       await req("/deals/"+deal.id+"/documents",{method:"POST",body:fd});
+      window.localStorage.setItem("dealCopilot.activeDealId",String(deal.id));
       await refresh();setActive("documents");
-    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+    }catch(e:any){setError(e.message);await refresh().catch(()=>{})}finally{setBusy(false)}
   }
   async function process(){
     if(!deal)return;
@@ -74,7 +87,7 @@ export default function Home(){
     try{
       await req("/deals/"+deal.id+"/process",{method:"POST"});
       await refresh();setActive("review");
-    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+    }catch(e:any){setError(e.message);await refresh().catch(()=>{});setActive("documents")}finally{setBusy(false)}
   }
   async function openDoc(id:number,path?:string){
     setSelectedDoc(id);

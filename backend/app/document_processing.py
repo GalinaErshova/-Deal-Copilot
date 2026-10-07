@@ -7,6 +7,7 @@ fields back to evidence.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from io import BytesIO
 from itertools import islice
@@ -55,6 +56,49 @@ class ParsedDocument:
                 f"[DOCUMENT={filename} PATH={block.path}{page} KIND={block.kind}]\n{block.text}"
             )
         return "\n\n".join(parts)
+
+
+def chunk_extraction_text(text: str, max_chars: int) -> list[str]:
+    """Разбивает текст для небольшой локальной модели, сохраняя маркеры источников."""
+    if max_chars <= 0:
+        raise ValueError("max_chars должен быть больше нуля")
+    if len(text) <= max_chars:
+        return [text] if text else []
+
+    sections = re.split(r"(?=\[DOCUMENT=)", text)
+    pieces: list[str] = []
+    for section in sections:
+        if not section:
+            continue
+        header, separator, body = section.partition("\n")
+        prefix = f"{header}{separator}" if separator else ""
+        body_limit = max_chars - len(prefix)
+        if body_limit <= 0:
+            raise ValueError("max_chars слишком мало для маркера документа")
+
+        while body:
+            if len(body) <= body_limit:
+                fragment, body = body, ""
+            else:
+                boundary = max(body.rfind("\n", 0, body_limit), body.rfind(" ", 0, body_limit))
+                if boundary < body_limit // 2:
+                    boundary = body_limit
+                fragment, body = body[:boundary].rstrip(), body[boundary:].lstrip()
+            if fragment:
+                pieces.append(prefix + fragment)
+
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        candidate = f"{current}\n\n{piece}" if current else piece
+        if current and len(candidate) > max_chars:
+            chunks.append(current)
+            current = piece
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
 
 def _cell(value: object) -> str:
     return "" if value is None else str(value)

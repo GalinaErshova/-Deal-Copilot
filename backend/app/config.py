@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/deal_copilot.db"
@@ -24,6 +26,7 @@ class Settings(BaseSettings):
     max_files_per_upload: int = 20
     max_spreadsheet_rows: int = 5000
     max_extraction_chars: int = 500_000
+    llm_input_chunk_chars: int = 12_000
 
     # Pricing assumptions and defaults. Override these with environment variables.
     working_days_per_month: float = 22.0
@@ -91,7 +94,7 @@ source_document, source_location, source_fragment и status.
 Основные поля: object_type, area_m2, schedule, contract_months,
 payment_delay_days, required_staff, sanitary_supplies_provider."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=BACKEND_DIR / ".env", extra="ignore")
 
     @model_validator(mode="after")
     def validate_configuration(self):
@@ -103,6 +106,7 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
             "max_files_per_upload": self.max_files_per_upload,
             "max_spreadsheet_rows": self.max_spreadsheet_rows,
             "max_extraction_chars": self.max_extraction_chars,
+            "llm_input_chunk_chars": self.llm_input_chunk_chars,
         }
         if any(value <= 0 for value in positive_values.values()):
             raise ValueError("Runtime limits and work schedule settings must be positive")
@@ -174,6 +178,23 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
     def parsed_sensitivity_deltas(self) -> tuple[float, ...]:
         return tuple(float(delta.strip()) for delta in self.sensitivity_deltas.split(",") if delta.strip())
 
+    def resolve_path(self, path: str | Path) -> Path:
+        """Разрешает относительные пути от backend/, а не от каталога запуска процесса."""
+        resolved = Path(path)
+        if not resolved.is_absolute():
+            resolved = BACKEND_DIR / resolved
+        return resolved.resolve()
+
+    @property
+    def resolved_database_url(self) -> str:
+        prefix = "sqlite:///"
+        if not self.database_url.startswith(prefix):
+            return self.database_url
+        relative_path = self.database_url[len(prefix):]
+        if relative_path == ":memory:":
+            return self.database_url
+        return f"{prefix}{self.resolve_path(relative_path).as_posix()}"
+
     @property
     def demo_reference_rates(self) -> list[tuple[str, str, str, float, str]]:
         return [
@@ -195,7 +216,7 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
         return self.demo_mode or self.llm_provider == "mock" or missing_cloud_key
 
     def ensure_dirs(self) -> None:
-        Path(self.upload_dir).mkdir(parents=True, exist_ok=True)
-        Path(self.data_dir).mkdir(parents=True, exist_ok=True)
+        self.resolve_path(self.upload_dir).mkdir(parents=True, exist_ok=True)
+        self.resolve_path(self.data_dir).mkdir(parents=True, exist_ok=True)
 
 settings = Settings()

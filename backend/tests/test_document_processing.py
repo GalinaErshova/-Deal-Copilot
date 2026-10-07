@@ -2,9 +2,9 @@ from io import BytesIO
 
 from openpyxl import Workbook
 
-from app.document_processing import ParsedBlock, ParsedDocument
+from app.document_processing import ParsedBlock, ParsedDocument, chunk_extraction_text
 from app.main import _field_source_is_valid
-from app.schemas import FieldEvidence
+from app.schemas import DealExtraction, FieldEvidence
 
 
 def test_extraction_text_contains_traceable_markers():
@@ -26,6 +26,39 @@ def test_extraction_text_contains_traceable_markers():
     assert "PATH=/page/4/p/3" in text
     assert "page=4" in text
     assert "8426,7" in text
+
+
+def test_chunk_extraction_text_keeps_source_markers_and_respects_limit():
+    text = "[DOCUMENT=7:ТЗ.docx PATH=/p/1 KIND=paragraph]\n" + ("Требование по графику. " * 90)
+
+    chunks = chunk_extraction_text(text, max_chars=180)
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 180 for chunk in chunks)
+    assert all(chunk.startswith("[DOCUMENT=7:ТЗ.docx PATH=/p/1 KIND=paragraph]\n") for chunk in chunks)
+    assert "Требование по графику." in " ".join(chunks)
+
+
+def test_merge_extractions_records_conflicting_values_across_chunks():
+    from app.main import _merge_extractions
+
+    first = FieldEvidence(
+        key="area_m2", label="Площадь", value="1200", unit="м²",
+        source_document="1:dogovor.docx", source_location="/p/1", source_fragment="Площадь 1200 м²",
+    )
+    second = FieldEvidence(
+        key="area_m2", label="Площадь", value="1500", unit="м²",
+        source_document="2:tehnicheskoe-zadanie.docx", source_location="/p/2", source_fragment="Площадь 1500 м²",
+    )
+
+    result = _merge_extractions([
+        DealExtraction(fields=[first], missing_fields=["area_m2", "schedule"]),
+        DealExtraction(fields=[second], missing_fields=["schedule"]),
+    ])
+
+    assert len(result.fields) == 2
+    assert result.missing_fields == ["schedule"]
+    assert any(item.get("key") == "area_m2" for item in result.contradictions)
 
 
 def test_xlsx_parser_obeys_configured_row_limit():
