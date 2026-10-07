@@ -35,6 +35,16 @@ const scheduleCountHint=(mode:ScheduleMode,settings:AppSettings|null):string=>{
   return "Количество нужно указать вручную.";
 };
 
+function productivityEstimate(component:AreaComponent,settings:AppSettings|null,monthlyHoursPerFte:number){
+  const rate=component.productivity_m2_per_shift||0;
+  if(!settings||rate<=0)return null;
+  const employeeShiftsPerVisit=component.area_m2/rate;
+  const hoursPerVisit=employeeShiftsPerVisit*settings.hours_per_shift;
+  const monthlyVisits=shiftsForMode(component.schedule_mode,settings)??component.shifts_per_month;
+  const hoursPerMonth=monthlyVisits&&monthlyVisits>0?hoursPerVisit*monthlyVisits:null;
+  return {rate,employeeShiftsPerVisit,hoursPerVisit,monthlyVisits,hoursPerMonth,fte:hoursPerMonth&&monthlyHoursPerFte>0?hoursPerMonth/monthlyHoursPerFte:null};
+}
+
 function evidenceText(text:string,fragments:string[]){
   let parts:ReactNode[]=[text];
   fragments.filter(Boolean).forEach((fragment,index)=>{
@@ -104,6 +114,7 @@ export default function Home(){
   const [error,setError]=useState("");
   const [form,setForm]=useState<CalculationForm|null>(null);
   const [manualArea,setManualArea]=useState("");
+  const [productivityHelp,setProductivityHelp]=useState<AreaComponent|null>(null);
 
   async function req(path:string, init?:RequestInit){
     if(!API) throw new Error("Настройте NEXT_PUBLIC_API_URL в frontend/.env.local");
@@ -288,6 +299,7 @@ export default function Home(){
     {key:"pipeline",label:"Контроль",title:"Контроль обработки",description:"Проверьте входы, результаты и предупреждения каждого этапа."},
   ];
   const currentTab=tabs.find(tab=>tab.key===active)??tabs[0];
+  const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
   const confirmed=fields.filter(x=>x.confirmed).length;
   const areaField=fields.find(x=>x.key==="area_m2");
   const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
@@ -431,10 +443,13 @@ export default function Home(){
             <div className="areaComponentTitle"><b>{component.address}</b><span>{component.area_type} · {component.work_type}</span></div>
             <div className="areaComponentInputs">
               <label><span>Площадь, м²</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})}/></label>
-              <label><span>Выработка, м²/смену</span><input type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Нет ставки для этого вида работ" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/></label>
+              <div className="productivityField">
+                <div className="productivityFieldLabel"><label htmlFor={`productivity-${component.id}`}>Выработка, м²/смену</label><button type="button" className="helpIcon" aria-label={`Пояснить выработку для адреса ${component.address}`} title="Что означает выработка?" onClick={()=>setProductivityHelp(component)}>i</button></div>
+                <input id={`productivity-${component.id}`} type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Нет ставки для этого вида работ" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/>
+              </div>
             </div>
             {component.productivity_reference&&<p className="fieldHint">Предварительная ставка из справочника «{component.productivity_reference.name}»: {component.productivity_reference.value} {component.productivity_reference.unit}. {component.productivity_reference.notes||""} Проверьте её и при необходимости замените.</p>}
-            {!component.productivity_reference&&<p className="warning">В справочнике нет выработки для этого вида работ. Введите значение из вашего прайса или внутренней нормы.</p>}
+            {!(component.productivity_m2_per_shift&&component.productivity_m2_per_shift>0)&&<p className="warning">{component.productivity_reference?"Введите положительную выработку для этой строки.":"В справочнике нет выработки для этого вида работ. Введите значение из вашего прайса или внутренней нормы."}</p>}
             <div className="areaSchedule">
               <div><h4>Режим уборки и смены</h4><p className="muted">Периодичность берётся из ТЗ. Для фиксированного режима смены в месяц рассчитываются автоматически.</p></div>
               <label><span>Режим</span><select value={component.schedule_mode} onChange={e=>updateScheduleMode(component.id,e.target.value as ScheduleMode)}>
@@ -503,6 +518,27 @@ export default function Home(){
       {runs.length===0?<div className="empty">Пока нет запусков.</div>:runs.map(run=><div className="run" key={run.id}><h3>{"Запуск #"+run.id+" · "+run.status}</h3>{run.steps.map((s,i)=><details className={"step "+s.status} key={i}><summary><span>{(s.status==="success"?"✓":s.status==="failed"?"✕":"○")+" "+s.name}</span><small>{s.duration_ms?String(s.duration_ms)+" ms":""}</small></summary><div className="stepBody">{s.warnings?.map(w=><p className="warning" key={w}>{w}</p>)}<div className="json"><b>Вход</b><pre>{JSON.stringify(s.input,null,2)}</pre></div><div className="json"><b>Выход</b><pre>{JSON.stringify(s.output,null,2)}</pre></div></div></details>)}</div>)}
     </section>}
       </div>
+      {productivityHelp&&<div className="modalBackdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setProductivityHelp(null)}}>
+        <section className="productivityModal" role="dialog" aria-modal="true" aria-labelledby="productivity-modal-title" tabIndex={-1} onKeyDown={event=>{if(event.key==="Escape")setProductivityHelp(null)}}>
+          <button type="button" className="modalClose" aria-label="Закрыть пояснение" autoFocus onClick={()=>setProductivityHelp(null)}>×</button>
+          <p className="modalEyebrow">ПОКАЗАТЕЛЬ В РАСЧЁТЕ</p>
+          <h2 id="productivity-modal-title">Что означает выработка</h2>
+          <p><b>Выработка</b> — площадь, которую один сотрудник успевает убрать за одну смену. Для этой строки: <b>{productivityHelp.address}</b> · {productivityHelp.area_type} · {productivityHelp.work_type}.</p>
+          <div className="productivityFormula">Площадь ÷ выработка × часов в смене × смен/выездов в месяц = трудозатраты за месяц</div>
+          {productivityHelpNumbers&&appSettings&&<div className="productivityCalculation">
+            <h3>Пример для этой строки</h3>
+            <p>{fmt(productivityHelp.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² ÷ {fmt(productivityHelpNumbers.rate,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²/смену = <b>{fmt(productivityHelpNumbers.employeeShiftsPerVisit,appSettings.display_locale,2)} смен одного сотрудника на одну уборку</b>.</p>
+            <p>Это примерно <b>{fmt(productivityHelpNumbers.hoursPerVisit,appSettings.display_locale,1)} человеко-часов за одну уборку</b> при {fmt(appSettings.hours_per_shift,appSettings.display_locale,1)} часах в смене.</p>
+            {productivityHelpNumbers.hoursPerMonth!==null&&<p>При режиме «{productivityHelp.schedule_label}» ({fmt(productivityHelpNumbers.monthlyVisits??0,appSettings.display_locale,1)} смен/выездов в месяц) получится около <b>{fmt(productivityHelpNumbers.hoursPerMonth,appSettings.display_locale,1)} человеко-часов в месяц</b> или {fmt(productivityHelpNumbers.fte??0,appSettings.display_locale,2)} FTE до коэффициента замещения.</p>}
+            {productivityHelpNumbers.hoursPerMonth===null&&<p className="warning">Месячный итог появится после ввода ожидаемого числа выездов или смен.</p>}
+          </div>}
+          {!productivityHelpNumbers&&<p className="warning">Чтобы показать расчёт для этой строки, введите положительную выработку в поле.</p>}
+          <p className="muted">Чем больше выработка, тем меньше расчётные трудозатраты и потребность в сотрудниках; чем меньше — тем больше. Ставка зависит от вида работ, механизации, состава операций и условий объекта.</p>
+          {productivityHelp.productivity_reference&&<p className="modalNote">Источник ставки: «{productivityHelp.productivity_reference.name}». {productivityHelp.productivity_reference.notes||""} Проверьте демо-значение по прайсу или внутренней норме.</p>}
+          {!productivityHelp.productivity_reference&&<p className="modalNote">Ставка введена вручную. Используйте значение из прайса, внутренней нормы или хронометража.</p>}
+          <button type="button" className="primary modalAction" onClick={()=>setProductivityHelp(null)}>Понятно</button>
+        </section>
+      </div>}
     </main>
   </div>
 }

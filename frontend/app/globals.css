@@ -176,7 +176,25 @@ details summary { cursor: pointer; }
 .areaComponentTitle span, .areaComponent small { color: #91a9bc; font-size: 12px; }
 .areaComponentInputs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
 .areaComponentInputs label { display: grid; gap: 5px; color: #a9bfd0; font-size: 12px; }
-.areaComponentInputs input { min-width: 0; width: 100%; padding: 8px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 7px; }
+.areaComponentInputs input, .productivityField input { min-width: 0; width: 100%; padding: 8px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 7px; }
+.productivityField { display: grid; min-width: 0; gap: 5px; }
+.productivityFieldLabel { display: flex; align-items: center; gap: 7px; color: #a9bfd0; font-size: 12px; }
+.productivityFieldLabel label { cursor: text; }
+.helpIcon { display: grid; width: 19px; height: 19px; flex: 0 0 19px; place-items: center; padding: 0; color: #a7d7ef; background: #102a3d; border: 1px solid #37607b; border-radius: 50%; font-size: 12px; font-weight: 800; line-height: 1; }
+.helpIcon:hover { color: #07111f; background: var(--green); border-color: var(--green); }
+.modalBackdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: #020912d9; backdrop-filter: blur(5px); }
+.productivityModal { position: relative; width: min(620px,100%); max-height: min(90vh,820px); overflow: auto; padding: clamp(20px,4vw,30px); background: #0b1b2b; border: 1px solid #31516a; border-radius: 16px; box-shadow: 0 24px 80px #0009; }
+.productivityModal h2 { margin: 0 44px 12px 0; font-size: 23px; }
+.productivityModal p { color: #b6cad9; line-height: 1.6; }
+.productivityModal .modalEyebrow { margin: 0 44px 7px 0; color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.modalClose { position: absolute; top: 15px; right: 15px; display: grid; width: 34px; height: 34px; place-items: center; padding: 0; color: #aec2d1; background: #10273d; border-radius: 50%; font-size: 23px; line-height: 1; }
+.productivityFormula { margin: 16px 0; padding: 13px 15px; color: #bce9d8; background: #0d2635; border: 1px solid #244e54; border-radius: 10px; line-height: 1.6; }
+.productivityCalculation { margin: 16px 0; padding: 14px; background: #081725; border: 1px solid #203a50; border-radius: 10px; }
+.productivityCalculation h3 { margin: 0 0 8px; font-size: 15px; }
+.productivityCalculation p { margin: 8px 0; }
+.productivityCalculation .warning { color: #ffe09a; }
+.modalNote { padding: 10px 12px; background: #102235; border-radius: 8px; font-size: 13px; }
+.modalAction { margin-top: 5px; }
 .areaSource { margin-top: 11px; }
 .areaSource p { color: #91a9bc; font-size: 12px; }
 .fieldHint { margin: 8px 0; color: #9eb9cc; font-size: 12px; }
