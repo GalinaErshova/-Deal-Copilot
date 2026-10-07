@@ -1,8 +1,11 @@
 import json
 from abc import ABC, abstractmethod
+
 from openai import OpenAI
 from pydantic import BaseModel
+
 from .config import settings
+
 
 class ModelProvider(ABC):
     @abstractmethod
@@ -26,21 +29,16 @@ class MiMoProvider(ModelProvider):
 class MockProvider(ModelProvider):
     def structured(self, *, model: str, system: str, user: str, schema: type[BaseModel]) -> BaseModel:
         del model, system, user
-        payload = {
-            "fields": [
-                {"key":"object_type","label":"Тип объекта","value":"Офис","confidence":0.96,"status":"extracted"},
-                {"key":"area_m2","label":"Площадь","value":"1200","unit":"м²","confidence":0.94,"status":"extracted"},
-                {"key":"schedule","label":"График","value":"5/2","confidence":0.91,"status":"extracted"},
-                {"key":"payment_delay_days","label":"Отсрочка оплаты","value":"30","unit":"дней","confidence":0.88,"status":"extracted"}
-            ],
-            "missing_fields":["Кто поставляет гигиенические расходники"],
-            "contradictions":[]
-        }
-        return schema.model_validate(payload)
+        return schema.model_validate(settings.parsed_mock_extraction)
 
 class ModelGateway:
     def __init__(self) -> None:
-        self.provider: ModelProvider = MockProvider() if settings.demo_mode or not settings.mimo_api_key else MiMoProvider()
+        if settings.is_demo_mode:
+            self.provider: ModelProvider = MockProvider()
+        elif settings.llm_provider == "mimo":
+            self.provider = MiMoProvider()
+        else:
+            raise ValueError(f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
 
     def structured(self, *, task: str, system: str, user: str, schema: type[BaseModel], complex_task: bool=False) -> BaseModel:
         model = settings.llm_complex_model if complex_task else settings.llm_default_model

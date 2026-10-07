@@ -1,14 +1,21 @@
-from datetime import datetime
-from sqlalchemy import String, Float, Integer, DateTime, ForeignKey, Text, Boolean
+from datetime import UTC, datetime
+
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from .db import Base
+
+
+def utc_now_naive() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
 
 class Deal(Base):
     __tablename__ = "deals"
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(250))
     status: Mapped[str] = mapped_column(String(50), default="draft")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     documents: Mapped[list["Document"]] = relationship(cascade="all, delete-orphan")
     fields: Mapped[list["ExtractedField"]] = relationship(cascade="all, delete-orphan")
 
@@ -45,7 +52,7 @@ class PipelineRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
     status: Mapped[str] = mapped_column(String(40), default="running")
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 class PipelineStep(Base):
@@ -72,7 +79,7 @@ class Calculation(Base):
     __tablename__ = "calculations"
     id: Mapped[int] = mapped_column(primary_key=True)
     deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     input_json: Mapped[str] = mapped_column(Text)
     output_json: Mapped[str] = mapped_column(Text)
     decision: Mapped[str] = mapped_column(String(40))

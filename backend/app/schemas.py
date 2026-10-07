@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 
 class FieldEvidence(BaseModel):
     key: str
@@ -18,21 +20,33 @@ class DealExtraction(BaseModel):
     contradictions: list[dict[str, Any]] = Field(default_factory=list)
 
 class CalculationRequest(BaseModel):
-    area_m2: float = 1200
-    service_price_per_m2_month: float = 180
-    productivity_m2_per_shift: float = 800
-    monthly_hours_per_fte: float = 164
-    hourly_staff_cost: float = 350
-    replacement_coefficient: float = 1.12
-    manager_monthly_cost: float = 8000
-    materials_per_m2_month: float = 7
-    equipment_per_m2_month: float = 2
-    logistics_monthly: float = 3000
-    overhead_rate: float = 0.08
-    contingency_rate: float = 0.03
-    target_margin: float = 0.15
-    vat_rate: float = 0.22
-    contract_months: int = 12
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    area_m2: float = Field(gt=0)
+    service_price_per_m2_month: float = Field(gt=0)
+    productivity_m2_per_shift: float = Field(gt=0)
+    monthly_hours_per_fte: float = Field(gt=0)
+    hourly_staff_cost: float = Field(ge=0)
+    replacement_coefficient: float = Field(ge=1)
+    manager_monthly_cost: float = Field(ge=0)
+    materials_per_m2_month: float = Field(ge=0)
+    equipment_per_m2_month: float = Field(ge=0)
+    logistics_monthly: float = Field(ge=0)
+    overhead_rate: float = Field(ge=0, lt=1)
+    contingency_rate: float = Field(ge=0, lt=1)
+    target_margin: float = Field(ge=0, lt=1)
+    vat_rate: float = Field(ge=0, lt=1)
+    contract_months: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def target_margin_must_be_achievable(self):
+        if self.overhead_rate + self.target_margin >= 1:
+            raise ValueError("overhead_rate + target_margin must be less than 1")
+        return self
+
+class ManualAreaFieldRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    value: float = Field(gt=0)
 
 class CalculationResult(BaseModel):
     labor_hours_month: float

@@ -50,7 +50,7 @@ python -m venv .venv
 # source .venv/bin/activate
 pip install -e .[dev]
 copy .env.example .env
-# Put MIMO_API_KEY in .env and set DEMO_MODE=false for real MiMo calls.
+# Set MIMO_API_KEY and DEMO_MODE=false for real MiMo calls.
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -60,13 +60,21 @@ Swagger: http://localhost:8000/docs
 
 ```bash
 cd frontend
-npm install
+npm ci
+copy .env.example .env.local
 npm run dev
 ```
 
 Open http://localhost:3000
 
-By default the API URL is http://localhost:8000/api. Override with `NEXT_PUBLIC_API_URL`.
+Set the API URL in `frontend/.env.local` with `NEXT_PUBLIC_API_URL`.
+
+Calculation defaults, labor assumptions, demo reference values, upload limits,
+accepted formats, prompt version, locale and currency are read from backend
+settings. `backend/.env.example` lists their environment variable names and
+demo defaults. In demo mode, extraction returns no invented fields; enter and
+confirm the area manually before running a calculation. Uploaded files are
+limited by the configured per-file, total-size and file-count settings.
 
 ## Secret handling
 

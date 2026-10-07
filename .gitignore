@@ -8,4 +8,7 @@ node_modules/
 data/*.db
 data/uploads/*
 !data/uploads/.gitkeep
+backend/data/*.db
+backend/data/uploads/*
+backend/deal_copilot_api.egg-info/
 .DS_Store

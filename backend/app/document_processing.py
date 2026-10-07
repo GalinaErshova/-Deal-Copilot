@@ -6,11 +6,12 @@ fields back to evidence.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from io import BytesIO
-from pathlib import Path
-from typing import Any
 import json
+from dataclasses import asdict, dataclass
+from io import BytesIO
+from itertools import islice
+from pathlib import Path
+
 
 @dataclass
 class ParsedBlock:
@@ -58,18 +59,23 @@ class ParsedDocument:
 def _cell(value: object) -> str:
     return "" if value is None else str(value)
 
-def parse_xlsx(data: bytes) -> ParsedDocument:
+def parse_xlsx(data: bytes, max_rows: int) -> ParsedDocument:
     from openpyxl import load_workbook
     book = load_workbook(BytesIO(data), read_only=True, data_only=True)
     blocks: list[ParsedBlock] = []
+    warnings: list[str] = []
     for index, sheet in enumerate(book.worksheets, start=1):
-        rows = [[_cell(v) for v in row] for row in sheet.iter_rows(values_only=True)]
+        raw_rows = list(islice(sheet.iter_rows(values_only=True), max_rows + 1))
+        truncated = len(raw_rows) > max_rows
+        rows = [[_cell(v) for v in row] for row in raw_rows[:max_rows]]
         rows = [r for r in rows if any(c.strip() for c in r)]
         if not rows:
             continue
-        md = "\n".join(" | ".join(r) for r in rows[:5000])
-        blocks.append(ParsedBlock("sheet", md, f"/sheet/{index}", title=sheet.title, rows=rows[:5000]))
-    return ParsedDocument("xlsx","medium",blocks,[])
+        md = "\n".join(" | ".join(r) for r in rows)
+        blocks.append(ParsedBlock("sheet", md, f"/sheet/{index}", title=sheet.title, rows=rows))
+        if truncated:
+            warnings.append(f"Лист {sheet.title}: обработаны первые {max_rows} строк")
+    return ParsedDocument("xlsx","medium",blocks,warnings)
 
 def parse_docx(data: bytes) -> ParsedDocument:
     from docx import Document
@@ -116,12 +122,12 @@ def parse_pdf(data: bytes) -> ParsedDocument:
     confidence = "high" if blocks and not scanned_pages else "medium" if blocks else "low"
     return ParsedDocument("pdf",confidence,blocks,warnings)
 
-def parse_document(filename: str, content_type: str, data: bytes) -> ParsedDocument:
+def parse_document(filename: str, content_type: str, data: bytes, max_spreadsheet_rows: int) -> ParsedDocument:
     ext = Path(filename).suffix.lower()
     if ext == ".pdf" or data.startswith(b"%PDF"):
         return parse_pdf(data)
     if ext == ".docx":
         return parse_docx(data)
     if ext == ".xlsx":
-        return parse_xlsx(data)
+        return parse_xlsx(data, max_spreadsheet_rows)
     raise ValueError(f"Unsupported format: {ext or content_type}")
