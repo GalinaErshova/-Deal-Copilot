@@ -39,6 +39,22 @@ class ParsedDocument:
     def plain_text(self) -> str:
         return "\n\n".join(x.text for x in self.blocks if x.text)
 
+    def extraction_text(self, filename: str) -> str:
+        """Text for LLM with stable evidence markers.
+
+        MiMo must copy source_document/source_location from these markers,
+        so every extracted field can be traced back to a parsed block.
+        """
+        parts: list[str] = []
+        for block in self.blocks:
+            if not block.text:
+                continue
+            page = f" page={block.page_no}" if block.page_no else ""
+            parts.append(
+                f"[DOCUMENT={filename} PATH={block.path}{page} KIND={block.kind}]\n{block.text}"
+            )
+        return "\n\n".join(parts)
+
 def _cell(value: object) -> str:
     return "" if value is None else str(value)
 
