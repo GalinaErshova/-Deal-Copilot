@@ -369,7 +369,7 @@ def area_components(deal_id:int, db:Session=Depends(get_db)):
         rate=_productivity_reference(component,rates)
         component["productivity_m2_per_shift"]=rate.value if rate else None
         component["productivity_reference"]=(
-            {"id":rate.id,"name":rate.name,"unit":rate.unit,"notes":rate.notes}
+            {"id":rate.id,"name":rate.name,"unit":rate.unit,"value":rate.value,"notes":rate.notes}
             if rate else None
         )
         component["shifts_per_month"]=calculate_monthly_shifts(
