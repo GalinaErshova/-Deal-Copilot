@@ -16,7 +16,7 @@ from .schemas import DealExtraction, CalculationRequest
 from .document_processing import parse_document
 from .model_gateway import gateway
 from .pricing import calculate
-from .demo_data import DEMO_REFERENCE_RATES
+from .demo_data import DEMO_REFERENCE_RATES\nfrom .prompts import EXTRACTION_PROMPT_VERSION, EXTRACTION_SYSTEM_PROMPT
 
 settings.ensure_dirs()
 Base.metadata.create_all(engine)
