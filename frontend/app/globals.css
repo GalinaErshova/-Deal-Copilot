@@ -158,6 +158,9 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .fieldInput { margin: 10px 0; }
 .fieldInput input { min-width: 0; flex: 1; padding: 10px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 8px; }
 .fieldInput button.confirmed { color: #9eebce; border-color: #3d8f70; }
+.sourceJump { display: inline-grid; width: 26px; height: 26px; flex: 0 0 26px; place-items: center; margin-left: 5px; padding: 4px; color: #9bcdf0; background: transparent; border: 1px solid #29465e; border-radius: 7px; vertical-align: middle; }
+.sourceJump svg { width: 16px; height: 16px; }
+.sourceJump:hover { color: #07111f; background: var(--green); border-color: var(--green); }
 .confidence { padding: 3px 7px; border-radius: 999px; font-size: 12px; }
 .confidence.good { color: #9bedcb; background: #113d31; }
 .confidence.warn { color: #ffe09a; background: #463715; }
@@ -176,6 +179,7 @@ details summary { cursor: pointer; }
 .areaComponentTitle span, .areaComponent small { color: #91a9bc; font-size: 12px; }
 .areaComponentInputs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
 .areaComponentInputs label { display: grid; gap: 5px; color: #a9bfd0; font-size: 12px; }
+.areaMeasureLabel { display: flex; align-items: center; gap: 1px; }
 .areaComponentInputs input, .productivityField input { min-width: 0; width: 100%; padding: 8px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 7px; }
 .productivityField { display: grid; min-width: 0; gap: 5px; }
 .productivityFieldLabel { display: flex; align-items: center; gap: 7px; color: #a9bfd0; font-size: 12px; }

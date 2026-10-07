@@ -240,6 +240,13 @@ export default function Home(){
       },120);
     }
   }
+  function sourceArrow(id:number|undefined|null,location:string|undefined|null,label:string,title?:string){
+    if(!id)return null;
+    const path=location?.split(/\s+page\s+/i)[0];
+    return <button type="button" className="sourceJump" aria-label={label} title={title||label} onClick={()=>{void openDoc(id,path)}}>
+      <svg aria-hidden="true" viewBox="0 0 20 20" fill="none"><path d="M3.5 10h12m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
+    </button>;
+  }
   async function saveField(row:Field,value:string){
     await req("/fields/"+row.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:value,confirmed:true})});
     if(row.key==="area_m2"){
@@ -423,9 +430,10 @@ export default function Home(){
           <div className="fieldInput">
             <input defaultValue={f.value||""} onBlur={e=>{if(e.target.value!==f.value)saveField(f,e.target.value)}}/>
             <span>{f.unit}</span>
+            {sourceArrow(f.source_document_id,f.source_location,`Открыть источник для поля «${f.label}»`,docs.find(doc=>doc.id===f.source_document_id)?.filename)}
             <button className={f.confirmed?"confirmed":""} onClick={()=>saveField(f,f.value||"")}>{f.confirmed?"✓ Подтверждено":"Подтвердить"}</button>
           </div>
-          <details><summary>Источник</summary><p className="sourceReference"><b>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote>{f.source_document_id&&<button onClick={()=>openDoc(f.source_document_id as number,(f.source_location||"").split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button>}</details>
+          <details><summary>Источник</summary><p className="sourceReference"><b>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote></details>
         </div>)}
       </div>
     </section>}
@@ -445,7 +453,7 @@ export default function Home(){
           {areaComponents.map(component=><div className="areaComponent" key={component.id}>
             <div className="areaComponentTitle"><b>{component.address}</b><span>{component.area_type} · {component.work_type}</span></div>
             <div className="areaComponentInputs">
-              <label><span>Площадь, м²</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})}/></label>
+              <label><span className="areaMeasureLabel">Площадь, м²{sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})}/></label>
               <div className="productivityField">
                 <div className="productivityFieldLabel"><label htmlFor={`productivity-${component.id}`}>Выработка, м²/смену</label><button type="button" className="helpIcon" aria-label={`Пояснить выработку для адреса ${component.address}`} title="Что означает выработка?" onClick={()=>setProductivityHelp(component)}>i</button></div>
                 <input id={`productivity-${component.id}`} type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Нет ставки для этого вида работ" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/>
@@ -466,7 +474,7 @@ export default function Home(){
               {component.schedule_mode==="on_request"&&(component.shifts_per_month||0)<=0&&<p className="warning">ТЗ задаёт уборку по заявкам, но количество заявок в месяц не определено. Укажите ожидаемое число выездов.</p>}
               {component.schedule_source_fragment&&<details className="areaSource"><summary>Источник режима в ТЗ: {component.schedule_source_document_name}</summary><p>{sourceLocationLabel(component.schedule_source_location,docs.find(doc=>doc.id===component.schedule_source_document_id)?.parser)}</p><blockquote>{component.schedule_source_fragment}</blockquote></details>}
             </div>
-            <details className="areaSource"><summary>Источник: {component.source_document_name}</summary><p>{sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</p><blockquote>{component.source_fragment}</blockquote><button onClick={()=>openDoc(component.source_document_id,component.source_location.split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button></details>
+            <details className="areaSource"><summary>Источник площади</summary><p>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</p><blockquote>{component.source_fragment}</blockquote></details>
             {component.work_type_source_fragment&&<details className="areaSource"><summary>Источник вида работ</summary><p>{component.work_type_source_location} · {docs.find(doc=>doc.id===component.work_type_source_document_id)?.filename}</p><blockquote>{component.work_type_source_fragment}</blockquote></details>}
             {component.curation_warnings?.length?<p className="warning">Проверка строки: {component.curation_warnings.join("; ")}</p>:null}
           </div>)}
@@ -485,7 +493,7 @@ export default function Home(){
         <h3>Трудоёмкость по адресам и видам уборки</h3>
         <p className="muted">Расчёт использует подтверждённую для каждой строки площадь, выработку и число смен. Экономика ниже считается по общей площади сделки.</p>
         <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Выработка</th><th>Режим и источник</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
-          {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.area_type} · {component.work_type}</small><details><summary>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</summary><blockquote>{component.source_fragment}</blockquote><button onClick={()=>openDoc(component.source_document_id,component.source_location.split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button></details></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²</td><td>{component.productivity_m2_per_shift} м²/смену<small>{component.productivity_reference?.name||"Введено вручную"}</small></td><td><b>{component.schedule_label}</b><small>{component.schedule_mode==="on_request"?"Оценка заявок/мес.":"Смен/мес."}</small><details><summary>{component.schedule_source_document_name||"Режим уборки"} · {sourceLocationLabel(component.schedule_source_location,docs.find(doc=>doc.id===component.schedule_source_document_id)?.parser)}</summary><blockquote>{component.schedule_source_fragment||"Режим задан вручную"}</blockquote></details></td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
+          {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.area_type} · {component.work_type}</small><details><summary>Цитата из документа</summary><small>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</small><blockquote>{component.source_fragment}</blockquote></details></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²{sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</td><td>{component.productivity_m2_per_shift} м²/смену<small>{component.productivity_reference?.name||"Введено вручную"}</small></td><td><b>{component.schedule_label}</b><small>{component.schedule_mode==="on_request"?"Оценка заявок/мес.":"Смен/мес."}</small><details><summary>{component.schedule_source_document_name||"Режим уборки"} · {sourceLocationLabel(component.schedule_source_location,docs.find(doc=>doc.id===component.schedule_source_document_id)?.parser)}</summary><blockquote>{component.schedule_source_fragment||"Режим задан вручную"}</blockquote></details></td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
         </tbody></table></div>
         <p className="areaResultsTotal">По площадкам: {fmt(calc.total_area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² · {fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} чел.-часов/мес. · {calc.physical_staff_by_site} сотрудников</p>
       </div>}
