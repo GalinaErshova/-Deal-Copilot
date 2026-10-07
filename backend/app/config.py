@@ -29,11 +29,15 @@ class Settings(BaseSettings):
     llm_input_chunk_chars: int = 12_000
     extraction_confidence_label_map: str = '{"высокая":0.95,"высокий":0.95,"high":0.95,"средняя":0.7,"средний":0.7,"medium":0.7,"низкая":0.4,"низкий":0.4,"low":0.4}'
 
-    # Pricing assumptions and defaults. Override these with environment variables.
+    # Режим работы и оценка смен в месяц; значения переопределяются переменными среды.
     working_days_per_month: float = 22.0
+    working_days_per_week: float = 5.0
+    monthly_frequency_shifts: float = 1.0
     hours_per_shift: float = 8.0
+    # Демо-значения формы; выработка подставляется только при наличии подходящей ставки справочника.
     default_area_m2: float = 1200.0
     default_service_price_per_m2_month: float = 180.0
+    # Предварительная демо-выработка помещений, м²/смену; не утверждённая корпоративная норма.
     default_productivity_m2_per_shift: float = 800.0
     default_monthly_hours_per_fte: float = 164.0
     default_hourly_staff_cost: float = 350.0
@@ -107,6 +111,8 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
     def validate_configuration(self):
         positive_values = {
             "working_days_per_month": self.working_days_per_month,
+            "working_days_per_week": self.working_days_per_week,
+            "monthly_frequency_shifts": self.monthly_frequency_shifts,
             "hours_per_shift": self.hours_per_shift,
             "max_upload_bytes": self.max_upload_bytes,
             "max_upload_total_bytes": self.max_upload_total_bytes,

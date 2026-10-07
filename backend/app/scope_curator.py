@@ -65,6 +65,23 @@ def curate_scope_components(
         elif not work_type_source or not any(work_type_source in text for text in text_by_id.get(work_type_document_id, [])):
             warnings.append("Источник вида уборки не найден в документе")
 
+        schedule_mode = component.get("schedule_mode")
+        schedule_document_id = component.get("schedule_source_document_id")
+        schedule_source = _normal(component.get("schedule_source_fragment"))
+        if schedule_mode == "unspecified":
+            component["schedule_status"] = "needs_input"
+            component["schedule_warnings"] = ["Режим уборки нужно задать вручную"]
+        elif (
+            schedule_document_id not in docs_by_id
+            or not schedule_source
+            or not any(schedule_source in text for text in text_by_id.get(schedule_document_id, []))
+        ):
+            component["schedule_status"] = "needs_review"
+            component["schedule_warnings"] = ["Источник режима уборки не подтверждён"]
+        else:
+            component["schedule_status"] = "verified"
+            component["schedule_warnings"] = []
+
         related = groups[(_normal(component.get("address")), _normal(component.get("area_type")))]
         values = {round(float(row["area_m2"]), 6) for row in related}
         if len(values) > 1:

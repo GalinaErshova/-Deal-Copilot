@@ -12,13 +12,28 @@ type Run={id:number;status:string;steps:Step[]};
 type ParsedBlock={kind:string;text:string;path:string;page_no?:number;title?:string;rows?:string[][]};
 type ParsedDocument={parser:string;blocks:ParsedBlock[];warnings?:string[]};
 type ProcessProgress={value:number;label:string};
-type AreaComponent={id:string;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number;source_document_name:string;source_location:string;source_fragment:string;curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;shifts_per_month:number|null;confirmed:boolean;labor_hours_month?:number;fte?:number;physical_staff?:number};
+type ScheduleMode="daily"|"weekly"|"monthly"|"on_request"|"custom"|"unspecified";
+type AreaComponent={id:string;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;labor_hours_month?:number;fte?:number;physical_staff?:number};
 type Calc={calculation_id:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
-type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
+type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
 const fmt=(n:number,locale:string,digits:number)=>new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(n);
 const money=(n:number,locale:string,currency:string,digits:number)=>new Intl.NumberFormat(locale,{style:"currency",currency,maximumFractionDigits:digits}).format(n);
+const shiftsForMode=(mode:ScheduleMode,settings:AppSettings|null):number|null=>{
+  if(!settings)return null;
+  if(mode==="daily")return settings.working_days_per_month;
+  if(mode==="weekly")return settings.working_days_per_month/settings.working_days_per_week;
+  if(mode==="monthly")return settings.monthly_frequency_shifts;
+  return null;
+};
+const scheduleCountHint=(mode:ScheduleMode,settings:AppSettings|null):string=>{
+  if(!settings)return "";
+  if(mode==="daily")return `Из настройки: ${settings.working_days_per_month} рабочих дней в месяц.`;
+  if(mode==="weekly")return `${settings.working_days_per_month} рабочих дней ÷ ${settings.working_days_per_week} дней в неделе = ${fmt(settings.working_days_per_month/settings.working_days_per_week,"ru-RU",1)} смены в среднем за месяц.`;
+  if(mode==="monthly")return `${settings.monthly_frequency_shifts} смена за месяц по настройке.`;
+  return "Количество нужно указать вручную.";
+};
 
 function evidenceText(text:string,fragments:string[]){
   let parts:ReactNode[]=[text];
@@ -85,6 +100,7 @@ export default function Home(){
   const [highlightPath,setHighlightPath]=useState<string|null>(null);
   const [processProgress,setProcessProgress]=useState<ProcessProgress|null>(null);
   const [calc,setCalc]=useState<Calc|null>(null);
+  const [calculationConfirmed,setCalculationConfirmed]=useState(false);
   const [error,setError]=useState("");
   const [form,setForm]=useState<CalculationForm|null>(null);
   const [manualArea,setManualArea]=useState("");
@@ -110,8 +126,9 @@ export default function Home(){
     setAreaComponents((current:AreaComponent[])=>all[3].map((source:AreaComponent)=>{
       const previous=current.find(item=>item.id===source.id);
       return {...source,area_m2:previous?.area_m2??source.area_m2,
-        productivity_m2_per_shift:previous?.productivity_m2_per_shift??null,
-        shifts_per_month:previous?.shifts_per_month??null,confirmed:previous?.confirmed??false};
+        productivity_m2_per_shift:previous?.productivity_m2_per_shift??source.productivity_m2_per_shift,
+        schedule_mode:previous?.schedule_mode??source.schedule_mode,
+        shifts_per_month:previous?.shifts_per_month??source.shifts_per_month};
     }));
   }
   useEffect(()=>{
@@ -131,11 +148,6 @@ export default function Home(){
     if(total>0)setForm(current=>current&&current.area_m2!==total?({...current,area_m2:total}):current);
   },[areaComponents,appSettings]);
   useEffect(()=>{
-    if(!appSettings?.working_days_per_month)return;
-    setAreaComponents(current=>current.map(component=>component.shifts_per_month===null
-      ?({...component,shifts_per_month:appSettings.working_days_per_month}):component));
-  },[appSettings?.working_days_per_month]);
-  useEffect(()=>{
     const documentIds=[...new Set(fields.map(field=>field.source_document_id).filter((id):id is number=>Boolean(id)))].filter(id=>!sourceParsed[id]);
     if(!documentIds.length)return;
     let cancelled=false;
@@ -150,7 +162,7 @@ export default function Home(){
     try{
       const d=await req("/deals?title="+encodeURIComponent("Демо: регулярный клининг офиса"),{method:"POST"});
       window.localStorage.setItem("dealCopilot.activeDealId",String(d.id));
-      setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setCalc(null);setActive("upload");
+      setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setCalc(null);setCalculationConfirmed(false);setActive("upload");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
   async function upload(files:FileList|null){
@@ -165,6 +177,7 @@ export default function Home(){
   }
   async function process(){
     if(!deal)return;
+    setCalculationConfirmed(false);setCalc(null);
     setBusy(true);setError("");
     const previousRunId=Math.max(0,...runs.map(run=>run.id));
     let stopPolling=false;
@@ -221,27 +234,35 @@ export default function Home(){
       const numeric=Number(String(value).replace(",",".").replace(/[^0-9.\-]/g,""));
       if(Number.isFinite(numeric) && numeric>0) setForm(current=>current?({...current,area_m2:numeric}):current);
     }
+    setCalculationConfirmed(false);setCalc(null);
     await refresh();
   }
   async function calculate(){
     if(!deal||!form)return;
-    if(!criticalReady){setError(areaComponents.length?"Укажите производительность и число смен, затем подтвердите каждую строку площади.":"Подтвердите критическое поле «Площадь» перед расчётом.");setActive(areaComponents.length?"workforce":"review");return;}
+    if(!calculationInputsReady){setError(areaComponents.length?"Заполните выработку и режим уборки для каждой строки. Если график задан заявками, укажите ожидаемые выезды в месяц.":"Подтвердите критическое поле «Площадь» перед расчётом.");setActive(areaComponents.length?"workforce":"review");return;}
+    if(!calculationConfirmed){setError("Подтвердите расчёт целиком на вкладке «Трудоёмкость».");setActive("workforce");return;}
     setBusy(true);setError("");
     try{
       const path=areaComponents.length?"/calculate-breakdown":"/calculate";
-      const body=areaComponents.length?{assumptions:form,components:areaComponents.map(({id,area_m2,productivity_m2_per_shift,shifts_per_month,confirmed})=>({id,area_m2,productivity_m2_per_shift,shifts_per_month,confirmed}))}:form;
+      const body=areaComponents.length?{confirmed:calculationConfirmed,assumptions:form,components:areaComponents.map(({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month})=>({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month}))}:form;
       const result=await req("/deals/"+deal.id+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       setCalc(result);setActive("economics");await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
   function updateAreaComponent(id:string,patch:Partial<AreaComponent>){
-    setAreaComponents(current=>current.map(component=>component.id===id?({...component,...patch,confirmed:false}):component));
+    setAreaComponents(current=>current.map(component=>component.id===id?({...component,...patch}):component));
+    setCalculationConfirmed(false);
     setCalc(null);
   }
 
-  function confirmAreaComponent(id:string,confirmed:boolean){
-    setAreaComponents(current=>current.map(component=>component.id===id?({...component,confirmed}):component));
+  function updateScheduleMode(id:string,mode:ScheduleMode){
+    updateAreaComponent(id,{schedule_mode:mode,shifts_per_month:shiftsForMode(mode,appSettings)});
+  }
+
+  function updateCalculationValue(key:keyof CalculationForm,value:number){
+    setForm(current=>current?({...current,[key]:value}):current);
+    setCalculationConfirmed(false);setCalc(null);
   }
 
   async function addManualArea(){
@@ -252,6 +273,7 @@ export default function Home(){
     try{
       await req("/deals/"+deal.id+"/fields/area",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:numeric})});
       setForm(current=>current?({...current,area_m2:numeric}):current);
+      setCalculationConfirmed(false);setCalc(null);
       setManualArea("");await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
@@ -269,9 +291,12 @@ export default function Home(){
   const confirmed=fields.filter(x=>x.confirmed).length;
   const areaField=fields.find(x=>x.key==="area_m2");
   const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
-    component.curation_status==="verified"&&component.confirmed&&component.area_m2>0&&(component.productivity_m2_per_shift||0)>0&&(component.shifts_per_month||0)>0
+    component.curation_status==="verified"&&component.schedule_status!=="needs_review"&&component.area_m2>0
+    &&(component.productivity_m2_per_shift||0)>0
+    &&((shiftsForMode(component.schedule_mode,appSettings)??component.shifts_per_month)||0)>0
   ));
-  const criticalReady=Boolean(form&&(areaComponents.length?areaBreakdownReady:areaField?.confirmed&&areaField.value));
+  const calculationInputsReady=Boolean(form&&(areaComponents.length?areaBreakdownReady:areaField?.confirmed&&areaField.value));
+  const criticalReady=Boolean(calculationInputsReady&&calculationConfirmed);
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
 
   return <div className="appShell">
@@ -370,7 +395,7 @@ export default function Home(){
     {active==="review"&&<section className="panel">
       <div className="sectionHead">
         <div><h2>Карточка требований</h2><p className="muted">Поля проверяются по источнику и подтверждаются пользователем.</p></div>
-        <button disabled={!criticalReady} onClick={()=>setActive("workforce")}>{criticalReady?"К расчёту →":"Подтвердите площадь"}</button>
+        <button onClick={()=>setActive("workforce")}>Настроить расчёт →</button>
       </div>
       <div className="fields">
         {!areaField&&<div className="field">
@@ -397,26 +422,42 @@ export default function Home(){
           ...(areaComponents.length?[]:[["area_m2","Площадь, м²"],["productivity_m2_per_shift","Выработка, м²/смену"]]),
           ["monthly_hours_per_fte","Фонд времени, ч/мес"],["hourly_staff_cost",`Стоимость часа, ${appSettings?.currency_unit_symbol??""}`],
           ["replacement_coefficient","Коэффициент замещения"]
-        ].map(function(x){const k=x[0] as keyof CalculationForm;return <label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={form[k]} onChange={e=>setForm(current=>current?({...current,[k]:Number(e.target.value)}):current)}/></label>})}
+        ].map(function(x){const k=x[0] as keyof CalculationForm;return <label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={form[k]} onChange={e=>updateCalculationValue(k,Number(e.target.value))}/></label>})}
         {areaComponents.length>0&&<div className="areaComponents">
-          <div className="sectionHead"><div><h3>Площади по адресам и видам работ</h3><p className="muted">Значения взяты из распознанных таблиц. Укажите выработку для каждой строки и сверьте цитату с документом.</p></div></div>
+          <div className="sectionHead"><div><h3>Площади по адресам и видам работ</h3><p className="muted">Адреса и вид уборки извлечены из ТЗ. Выработка подставляется из внутреннего справочника, если найдена подходящая ставка.</p></div></div>
           <div className="areaTotal"><span>Суммарная площадь без строк «Итого»</span><b>{appSettings?fmt(areaComponents.reduce((sum,item)=>sum+item.area_m2,0),appSettings.display_locale,appSettings.display_number_max_fraction_digits):areaComponents.reduce((sum,item)=>sum+item.area_m2,0)} м²</b></div>
+          <details className="areaSource"><summary>Как выбирается выработка</summary><p>Она зависит от вида уборки и механизации, состава операций и их периодичности, типа помещений, загруженности мебелью, планировки и переходов между объектами. Единой ставки для всех работ нет.</p><p>800 м²/смену — имеющаяся демонстрационная упрощённая ставка для регулярной уборки помещений. Проверьте её по вашему прайсу или хронометражу; для уборки снега значение нужно задать отдельно.</p></details>
           {areaComponents.map(component=><div className="areaComponent" key={component.id}>
             <div className="areaComponentTitle"><b>{component.address}</b><span>{component.area_type} · {component.work_type}</span></div>
             <div className="areaComponentInputs">
               <label><span>Площадь, м²</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})}/></label>
-              <label><span>Выработка, м²/смену</span><input type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Задайте для строки" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/></label>
-              <label><span>Смен в месяц</span><input type="number" min="0" step="any" value={component.shifts_per_month??""} onChange={e=>updateAreaComponent(component.id,{shifts_per_month:e.target.value?Number(e.target.value):null})}/></label>
+              <label><span>Выработка, м²/смену</span><input type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Нет ставки для этого вида работ" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/></label>
+            </div>
+            {component.productivity_reference&&<p className="fieldHint">Предварительная ставка из справочника «{component.productivity_reference.name}»: {component.productivity_reference.value} {component.productivity_reference.unit}. {component.productivity_reference.notes||""} Проверьте её и при необходимости замените.</p>}
+            {!component.productivity_reference&&<p className="warning">В справочнике нет выработки для этого вида работ. Введите значение из вашего прайса или внутренней нормы.</p>}
+            <div className="areaSchedule">
+              <div><h4>Режим уборки и смены</h4><p className="muted">Периодичность берётся из ТЗ. Для фиксированного режима смены в месяц рассчитываются автоматически.</p></div>
+              <label><span>Режим</span><select value={component.schedule_mode} onChange={e=>updateScheduleMode(component.id,e.target.value as ScheduleMode)}>
+                <option value="daily">Каждый рабочий день</option><option value="weekly">Еженедельно</option><option value="monthly">Ежемесячно</option>
+                <option value="on_request">По разовым заявкам</option><option value="custom">Другой режим — ввести число смен</option><option value="unspecified">В ТЗ не указан — ввести число смен</option>
+              </select></label>
+              <label><span>{component.schedule_mode==="on_request"?"Заявок/выездов в месяц":"Смен в месяц"}</span><input type="number" min="0" step="any" value={shiftsForMode(component.schedule_mode,appSettings)??component.shifts_per_month??""} readOnly={shiftsForMode(component.schedule_mode,appSettings)!==null} placeholder="Укажите ожидаемое число" onChange={e=>updateAreaComponent(component.id,{shifts_per_month:e.target.value?Number(e.target.value):null})}/></label>
+              <p className="fieldHint">{scheduleCountHint(component.schedule_mode,appSettings)}{(component.schedule_additional_frequencies?.length??0)>0?" Дополнительные еженедельные/ежемесячные операции показаны отдельно; их трудоёмкость здесь не прибавляется как отдельные смены.":""}</p>
+              {component.schedule_status==="needs_input"&&<p className="warning">График в ТЗ не найден. Выберите режим уборки; если он не регулярный, укажите ожидаемое число смен.</p>}
+              {component.schedule_warnings?.map((warning,index)=><p className="warning" key={index}>{warning}</p>)}
+              {component.schedule_mode==="on_request"&&(component.shifts_per_month||0)<=0&&<p className="warning">ТЗ задаёт уборку по заявкам, но количество заявок в месяц не определено. Укажите ожидаемое число выездов.</p>}
+              {component.schedule_source_fragment&&<details className="areaSource"><summary>Источник режима в ТЗ: {component.schedule_source_document_name}</summary><p>{sourceLocationLabel(component.schedule_source_location,docs.find(doc=>doc.id===component.schedule_source_document_id)?.parser)}</p><blockquote>{component.schedule_source_fragment}</blockquote></details>}
             </div>
             <details className="areaSource"><summary>Источник: {component.source_document_name}</summary><p>{sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</p><blockquote>{component.source_fragment}</blockquote><button onClick={()=>openDoc(component.source_document_id,component.source_location.split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button></details>
             {component.work_type_source_fragment&&<details className="areaSource"><summary>Источник вида работ</summary><p>{component.work_type_source_location} · {docs.find(doc=>doc.id===component.work_type_source_document_id)?.filename}</p><blockquote>{component.work_type_source_fragment}</blockquote></details>}
             {component.curation_warnings?.length?<p className="warning">Проверка строки: {component.curation_warnings.join("; ")}</p>:null}
-            <label className="areaConfirm"><input type="checkbox" checked={component.confirmed} disabled={component.curation_status!=="verified"||component.area_m2<=0||(component.productivity_m2_per_shift||0)<=0||(component.shifts_per_month||0)<=0} onChange={e=>confirmAreaComponent(component.id,e.target.checked)}/><span>Сверила строку с документом и подтвердила параметры расчёта</span></label>
           </div>)}
         </div>}
+        <label className="calculationConfirmation"><input type="checkbox" checked={calculationConfirmed} disabled={!calculationInputsReady} onChange={e=>setCalculationConfirmed(e.target.checked)}/><span><b>Подтверждаю расчёт целиком</b><small>Проверены площади и источники, режимы уборки, ставки выработки и общие параметры. При изменении любого значения подтверждение сбросится.</small></span></label>
         <button className="primary" disabled={!criticalReady} onClick={calculate}>Рассчитать трудоёмкость и экономику</button>
         {!form&&<p className="empty">Загрузка настроек расчёта…</p>}
-        {!criticalReady&&<p className="warning">{areaComponents.length?"Чтобы запустить расчёт, задайте выработку для каждого адреса и вида работ и подтвердите строки.":"Расчёт заблокирован: подтвердите площадь в карточке требований."}</p>}
+        {!calculationInputsReady&&<p className="warning">{areaComponents.length?"Заполните отсутствующую выработку или задайте режим и количество смен для всех строк.":"Расчёт заблокирован: подтвердите площадь в карточке требований."}</p>}
+        {calculationInputsReady&&!calculationConfirmed&&<p className="muted">После проверки всех строк поставьте единое подтверждение, чтобы запустить расчёт.</p>}
       </div>
       <div className="calcPreview">
         <h2>Логика MVP-1</h2>
@@ -431,8 +472,8 @@ export default function Home(){
       {calc?.components?.length&&appSettings&&<div className="areaResults">
         <h3>Трудоёмкость по адресам и видам уборки</h3>
         <p className="muted">Расчёт использует подтверждённую для каждой строки площадь, выработку и число смен. Экономика ниже считается по общей площади сделки.</p>
-        <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Выработка</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
-          {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.area_type}</small><details><summary>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</summary><blockquote>{component.source_fragment}</blockquote><button onClick={()=>openDoc(component.source_document_id,component.source_location.split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button></details></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²</td><td>{component.productivity_m2_per_shift} м²/смену</td><td>{component.shifts_per_month}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
+        <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Выработка</th><th>Режим и источник</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
+          {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.area_type} · {component.work_type}</small><details><summary>{component.source_document_name} · {sourceLocationLabel(component.source_location,docs.find(doc=>doc.id===component.source_document_id)?.parser)}</summary><blockquote>{component.source_fragment}</blockquote><button onClick={()=>openDoc(component.source_document_id,component.source_location.split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button></details></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м²</td><td>{component.productivity_m2_per_shift} м²/смену<small>{component.productivity_reference?.name||"Введено вручную"}</small></td><td><b>{component.schedule_label}</b><small>{component.schedule_mode==="on_request"?"Оценка заявок/мес.":"Смен/мес."}</small><details><summary>{component.schedule_source_document_name||"Режим уборки"} · {sourceLocationLabel(component.schedule_source_location,docs.find(doc=>doc.id===component.schedule_source_document_id)?.parser)}</summary><blockquote>{component.schedule_source_fragment||"Режим задан вручную"}</blockquote></details></td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
         </tbody></table></div>
         <p className="areaResultsTotal">По площадкам: {fmt(calc.total_area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² · {fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} чел.-часов/мес. · {calc.physical_staff_by_site} сотрудников</p>
       </div>}
@@ -442,7 +483,7 @@ export default function Home(){
             ["service_price_per_m2_month",`Тариф, ${appSettings?.currency_unit_symbol??""}/м²/мес`],["materials_per_m2_month",`Материалы, ${appSettings?.currency_unit_symbol??""}/м²/мес`],
             ["equipment_per_m2_month",`Техника, ${appSettings?.currency_unit_symbol??""}/м²/мес`],["manager_monthly_cost",`Управление, ${appSettings?.currency_unit_symbol??""}/мес`],
             ["logistics_monthly",`Логистика, ${appSettings?.currency_unit_symbol??""}/мес`],["target_margin","Целевая маржа"]
-          ].map(function(x){const k=x[0] as keyof CalculationForm;return form?<label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={form[k]} onChange={e=>setForm(current=>current?({...current,[k]:Number(e.target.value)}):current)}/></label>:null})}
+          ].map(function(x){const k=x[0] as keyof CalculationForm;return form?<label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={form[k]} onChange={e=>updateCalculationValue(k,Number(e.target.value))}/></label>:null})}
           <button onClick={calculate}>Пересчитать</button>
         </div>
         {calc?<div className="kpis">

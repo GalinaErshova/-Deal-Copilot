@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -118,13 +118,16 @@ class CalculationRequest(BaseModel):
         return self
 
 class AreaComponentCalculation(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     id: str
     area_m2: float = Field(gt=0)
-    productivity_m2_per_shift: float = Field(gt=0)
-    shifts_per_month: float = Field(gt=0)
-    confirmed: bool = False
+    productivity_m2_per_shift: float | None = Field(default=None, gt=0)
+    schedule_mode: Literal["daily", "weekly", "monthly", "on_request", "custom", "unspecified"]
+    shifts_per_month: float | None = Field(default=None, gt=0)
 
 class CalculationBreakdownRequest(BaseModel):
+    confirmed: bool = False
     components: list[AreaComponentCalculation] = Field(min_length=1)
     assumptions: CalculationRequest
 

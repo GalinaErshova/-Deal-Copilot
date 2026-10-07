@@ -179,8 +179,17 @@ details summary { cursor: pointer; }
 .areaComponentInputs input { min-width: 0; width: 100%; padding: 8px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 7px; }
 .areaSource { margin-top: 11px; }
 .areaSource p { color: #91a9bc; font-size: 12px; }
-.areaConfirm { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; color: #b7c9d8; font-size: 12px; }
-.areaConfirm input { margin-top: 2px; accent-color: #70e0b7; }
+.fieldHint { margin: 8px 0; color: #9eb9cc; font-size: 12px; }
+.areaSchedule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, .8fr) minmax(130px, .5fr); align-items: end; gap: 10px; margin-top: 12px; padding: 12px; background: #0d2030; border: 1px solid #24465f; border-radius: 9px; }
+.areaSchedule h4 { margin: 0 0 4px; }
+.areaSchedule p { grid-column: 1 / -1; margin: 0; }
+.areaSchedule label { display: grid; gap: 5px; color: #a9bfd0; font-size: 12px; }
+.areaSchedule select, .areaSchedule input { width: 100%; min-width: 0; padding: 8px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 7px; }
+.areaSchedule input[readonly] { color: #92e3c3; background: #0a1c29; }
+.calculationConfirmation { display: flex; align-items: flex-start; gap: 10px; margin: 17px 0 12px; padding: 13px; color: #c6d9e6; background: #0b2130; border: 1px solid #29614e; border-radius: 9px; }
+.calculationConfirmation input { margin-top: 3px; accent-color: #70e0b7; }
+.calculationConfirmation span { display: grid; gap: 4px; }
+.calculationConfirmation small { color: #93adbf; line-height: 1.5; }
 .areaResults { margin: 18px 0; padding: 16px; background: #0a1826; border: 1px solid #19334c; border-radius: 12px; }
 .areaResultsTable { overflow: auto; margin-top: 12px; }
 .areaResultsTable table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -191,7 +200,7 @@ details summary { cursor: pointer; }
 .areaResultsTable td details { color: #91a9bc; }
 .areaResultsTotal { display: block; margin: 12px 0 0; }
 .areaResultsTotal { color: #82e4c1; }
-@media (max-width: 760px) { .areaComponentInputs { grid-template-columns: 1fr; } .areaTotal { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 760px) { .areaComponentInputs, .areaSchedule { grid-template-columns: 1fr; } .areaTotal { align-items: flex-start; flex-direction: column; } }
 .control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 150px); align-items: center; gap: 15px; margin: 9px 0; }
 .control input { min-width: 0; padding: 9px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 8px; }
 .calcPreview { padding: 20px; background: #071522; border: 1px solid #17334b; border-radius: 13px; }

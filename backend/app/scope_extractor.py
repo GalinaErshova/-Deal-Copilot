@@ -6,6 +6,8 @@ import json
 import re
 from typing import Any
 
+from .scope_schedule import extract_cleaning_schedule
+
 
 def _normal(text: Any) -> str:
     return " ".join(str(text or "").replace("\u00a0", " ").split()).casefold()
@@ -97,6 +99,7 @@ def extract_area_components(documents: list[Any]) -> list[dict[str, Any]]:
                         address = description
                         area_type = "Помещения"
                     work_type, work_type_doc_id, work_type_location, work_type_source = _work_type_evidence(documents, territory)
+                    schedule = extract_cleaning_schedule(documents, work_type)
 
                     identity = (address.casefold(), area_type.casefold(), area_m2)
                     if identity in seen:
@@ -114,6 +117,7 @@ def extract_area_components(documents: list[Any]) -> list[dict[str, Any]]:
                             "work_type_source_document_id": work_type_doc_id,
                             "work_type_source_location": work_type_location,
                             "work_type_source_fragment": work_type_source,
+                            **schedule,
                             "area_m2": area_m2,
                             "source_document_id": document.id,
                             "source_document_name": document.filename,

@@ -27,11 +27,17 @@ def test_settings_parse_runtime_lists():
         cors_origins="http://localhost:3000, https://demo.example",
         accepted_upload_extensions=".pdf, .docx",
         sensitivity_deltas="-0.1,0,0.1",
+        working_days_per_month=21,
+        working_days_per_week=6,
+        monthly_frequency_shifts=1.5,
     )
 
     assert configuration.parsed_cors_origins == ["http://localhost:3000", "https://demo.example"]
     assert configuration.parsed_upload_extensions == [".pdf", ".docx"]
     assert configuration.parsed_sensitivity_deltas == (-0.1, 0.0, 0.1)
+    assert configuration.working_days_per_month == 21
+    assert configuration.working_days_per_week == 6
+    assert configuration.monthly_frequency_shifts == 1.5
 
 
 def test_invalid_runtime_configuration_is_rejected():

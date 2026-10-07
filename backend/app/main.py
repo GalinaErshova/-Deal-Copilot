@@ -34,6 +34,7 @@ from .schemas import (
 )
 from .scope_curator import curate_scope_components
 from .scope_extractor import extract_area_components
+from .scope_schedule import calculate_monthly_shifts
 
 settings.ensure_dirs()
 Base.metadata.create_all(engine)
@@ -145,6 +146,8 @@ def public_settings():
     return {
         "calculation_defaults": settings.calculation_defaults,
         "working_days_per_month": settings.working_days_per_month,
+        "working_days_per_week": settings.working_days_per_week,
+        "monthly_frequency_shifts": settings.monthly_frequency_shifts,
         "hours_per_shift": settings.hours_per_shift,
         "accepted_upload_extensions": settings.parsed_upload_extensions,
         "demo_mode": settings.is_demo_mode,
@@ -342,12 +345,40 @@ def fields(deal_id:int,db:Session=Depends(get_db)):
              "confidence":r.confidence,"source_document_id":r.source_document_id,
              "source_location":r.source_location,"source_fragment":r.source_fragment,"confirmed":r.confirmed} for r in rows]
 
+def _productivity_reference(component:dict, rates:list[ReferenceRate])->ReferenceRate|None:
+    normalized_type=str(component.get("work_type") or "").casefold()
+    is_snow="снег" in normalized_type or "механизирован" in normalized_type
+    for rate in rates:
+        name=str(rate.name or "").casefold()
+        unit=str(rate.unit or "").casefold().replace(" ", "")
+        if unit not in {"м²/смену", "м2/смену"} or rate.value <= 0:
+            continue
+        rate_is_snow=any(token in name for token in ("снег", "территор", "механизирован"))
+        if rate_is_snow == is_snow and (is_snow or "регуляр" in name or "помещ" in name):
+            return rate
+    return None
+
 @app.get("/api/deals/{deal_id}/area-components")
 def area_components(deal_id:int, db:Session=Depends(get_db)):
     if not db.get(Deal, deal_id): raise HTTPException(404,"Deal not found")
     docs=db.query(Document).filter(Document.deal_id==deal_id).order_by(Document.id).all()
     components=extract_area_components(docs)
-    return curate_scope_components(docs,components)
+    components=curate_scope_components(docs,components)
+    rates=db.query(ReferenceRate).filter(ReferenceRate.category=="productivity").all()
+    for component in components:
+        rate=_productivity_reference(component,rates)
+        component["productivity_m2_per_shift"]=rate.value if rate else None
+        component["productivity_reference"]=(
+            {"id":rate.id,"name":rate.name,"unit":rate.unit,"notes":rate.notes}
+            if rate else None
+        )
+        component["shifts_per_month"]=calculate_monthly_shifts(
+            str(component.get("schedule_mode") or "unspecified"),
+            working_days_per_month=settings.working_days_per_month,
+            working_days_per_week=settings.working_days_per_week,
+            monthly_frequency_shifts=settings.monthly_frequency_shifts,
+        )
+    return components
 
 @app.patch("/api/fields/{field_id}")
 def update_field(field_id:int,payload:dict,db:Session=Depends(get_db)):
@@ -433,30 +464,53 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         raise HTTPException(409,"Состав адресов и площадей изменился. Обновите страницу и проверьте источники")
     if any(component["curation_status"]!="verified" for component in source_components):
         raise HTTPException(409,"Куратор обнаружил непроверенные источники или неоднозначные строки. Исправьте данные документов перед расчётом")
-    if any(not component.confirmed for component in req.components):
-        raise HTTPException(409,"Сверьте и подтвердите площадь, производительность и число смен для каждой строки")
+    if any(component["schedule_status"]=="needs_review" for component in source_components):
+        raise HTTPException(409,"Куратор не смог подтвердить источник режима уборки; проверьте цитаты в документе")
+    if not req.confirmed:
+        raise HTTPException(409,"Подтвердите расчёт целиком после проверки исходных данных и предположений")
 
     items_by_id={component.id:component for component in req.components}
+    shifts_by_id: dict[str, float] = {}
+    for source in source_components:
+        item=items_by_id[source["id"]]
+        if item.productivity_m2_per_shift is None:
+            raise HTTPException(409,f"Задайте выработку для строки «{source['address']} — {source['work_type']}»")
+        shifts=calculate_monthly_shifts(
+            item.schedule_mode,
+            working_days_per_month=settings.working_days_per_month,
+            working_days_per_week=settings.working_days_per_week,
+            monthly_frequency_shifts=settings.monthly_frequency_shifts,
+            manual_shifts=item.shifts_per_month,
+        )
+        if shifts is None or shifts<=0:
+            raise HTTPException(409,f"Укажите ожидаемое число смен в месяц для строки «{source['address']} — {source['work_type']}»")
+        shifts_by_id[source["id"]]=shifts
+
     total_area=sum(items_by_id[component["id"]].area_m2 for component in source_components)
     total_workload=sum(
         items_by_id[component["id"]].area_m2
         / items_by_id[component["id"]].productivity_m2_per_shift
-        * items_by_id[component["id"]].shifts_per_month
+        * shifts_by_id[component["id"]]
         for component in source_components
     )
     if total_area<=0 or total_workload<=0:
         raise HTTPException(409,"Для расчёта нужна положительная площадь и производительность")
 
     line_results=[]
+    productivity_rates=db.query(ReferenceRate).filter(ReferenceRate.category=="productivity").all()
     for source in source_components:
         item=items_by_id[source["id"]]
-        labor_hours=(item.area_m2/item.productivity_m2_per_shift*settings.hours_per_shift*item.shifts_per_month)
+        rate=_productivity_reference(source,productivity_rates)
+        shifts=shifts_by_id[source["id"]]
+        labor_hours=(item.area_m2/item.productivity_m2_per_shift*settings.hours_per_shift*shifts)
         fte=labor_hours/req.assumptions.monthly_hours_per_fte
         line_results.append({
             **source,
             "area_m2":item.area_m2,
             "productivity_m2_per_shift":item.productivity_m2_per_shift,
-            "shifts_per_month":item.shifts_per_month,
+            "schedule_mode":item.schedule_mode,
+            "shifts_per_month":shifts,
+            "productivity_reference":({"id":rate.id,"name":rate.name,"unit":rate.unit,"notes":rate.notes} if rate else None),
             "labor_hours_month":round(labor_hours,settings.labor_hours_decimal_places),
             "fte":round(fte,settings.fte_decimal_places),
             "physical_staff":max(settings.minimum_physical_staff,math.ceil(fte*req.assumptions.replacement_coefficient)),
@@ -469,6 +523,7 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
     })
     aggregate=calculate(calculation_request,settings)
     output={
+        "confirmed":req.confirmed,
         "components":line_results,
         "total_area_m2":round(total_area,settings.currency_decimal_places),
         "physical_staff_by_site":sum(item["physical_staff"] for item in line_results),
