@@ -55,6 +55,12 @@ def test_backend_env_example_loads_as_valid_settings():
         "missing_fields": [],
         "contradictions": [],
     }
+    assert configuration.parsed_extraction_confidence_label_map["высокая"] == 0.95
+
+
+def test_extraction_confidence_label_map_must_stay_in_unit_interval():
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, extraction_confidence_label_map='{"high":1.1}')
 
 
 def test_relative_sqlite_and_upload_paths_resolve_from_backend_directory():

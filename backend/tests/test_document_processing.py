@@ -100,3 +100,26 @@ def test_field_evidence_normalizes_numeric_model_values():
     field = FieldEvidence(key="area_m2", label="Площадь", value=1200, unit="м²")
 
     assert field.value == "1200"
+
+
+def test_field_evidence_normalizes_qualitative_confidence_from_mimo():
+    high = FieldEvidence(key="area_m2", label="Площадь", value="1200", confidence="высокая", status=None)
+    medium = FieldEvidence(key="schedule", label="График", value="ежедневно", confidence="средняя")
+    low = FieldEvidence(key="staff", label="Персонал", value="4", confidence="низкая")
+    unknown = FieldEvidence(key="unknown", label="Неизвестно", confidence="не уверен")
+
+    assert high.confidence == 0.95
+    assert high.status == "extracted"
+    assert medium.confidence == 0.7
+    assert low.confidence == 0.4
+    assert unknown.confidence is None
+
+
+def test_deal_extraction_normalizes_non_list_model_contradictions():
+    empty = DealExtraction.model_validate({"contradictions": ": "})
+    text = DealExtraction.model_validate({"contradictions": "Площадь различается в двух документах"})
+    items = DealExtraction.model_validate({"contradictions": ["Разные сроки оплаты"]})
+
+    assert empty.contradictions == []
+    assert text.contradictions == [{"description": "Площадь различается в двух документах"}]
+    assert items.contradictions == [{"description": "Разные сроки оплаты"}]

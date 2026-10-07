@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     max_spreadsheet_rows: int = 5000
     max_extraction_chars: int = 500_000
     llm_input_chunk_chars: int = 12_000
+    extraction_confidence_label_map: str = '{"высокая":0.95,"высокий":0.95,"high":0.95,"средняя":0.7,"средний":0.7,"medium":0.7,"низкая":0.4,"низкий":0.4,"low":0.4}'
 
     # Pricing assumptions and defaults. Override these with environment variables.
     working_days_per_month: float = 22.0
@@ -74,10 +75,15 @@ class Settings(BaseSettings):
     mock_extraction_payload: str = '{"fields":[],"missing_fields":[],"contradictions":[]}'
     extraction_prompt_version: str = "cleaning_requirements_v2"
     extraction_system_prompt: str = """Ты извлекаешь данные из тендерных документов для B2B-клининга.
-Верни JSON только в структуре: fields, missing_fields, contradictions.
+Верни только валидный JSON без Markdown и пояснений, строго в структуре:
+{"fields": [], "missing_fields": [], "contradictions": []}.
 
-Для каждого элемента fields верни key, label, value, unit, confidence,
-source_document, source_location, source_fragment и status.
+Для каждого элемента fields верни key и label (строки), value и unit
+(строки или null), confidence (число от 0 до 1 или null), source_document,
+source_location, source_fragment и status (строки или null).
+missing_fields всегда должен быть массивом строк.
+contradictions всегда должен быть массивом объектов; если противоречий нет,
+верни пустой массив []. Не заменяй его строкой, двоеточием или null.
 
 Документы передаются блоками с маркерами вида:
 [DOCUMENT=<имя файла> PATH=<путь блока> page=<номер страницы> KIND=<тип>]
@@ -90,6 +96,7 @@ source_document, source_location, source_fragment и status.
 5. Если значение отсутствует, не создавай поле: укажи его в missing_fields.
 6. Если документы задают разные значения одного параметра, добавь их в contradictions.
 7. Для чисел возвращай только число в value, единицу измерения — в unit.
+8. confidence возвращай числом от 0 до 1, не словами «высокая/средняя/низкая».
 
 Основные поля: object_type, area_m2, schedule, contract_months,
 payment_delay_days, required_staff, sanitary_supplies_provider."""
@@ -129,6 +136,9 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
             raise ValueError("Display scaling settings must be positive")
         if not 0 <= self.confidence_good_threshold <= 1:
             raise ValueError("confidence_good_threshold must be between 0 and 1")
+        confidence_labels = self.parsed_extraction_confidence_label_map
+        if any(not 0 <= value <= 1 for value in confidence_labels.values()):
+            raise ValueError("extraction_confidence_label_map values must be between 0 and 1")
         if self.sensitivity_bar_min_width < 0 or self.sensitivity_bar_max_width < self.sensitivity_bar_min_width:
             raise ValueError("Sensitivity bar width settings are invalid")
         if any(delta <= -1 for delta in self.parsed_sensitivity_deltas):
@@ -209,6 +219,13 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
     @property
     def parsed_mock_extraction(self) -> dict:
         return json.loads(self.mock_extraction_payload)
+
+    @property
+    def parsed_extraction_confidence_label_map(self) -> dict[str, float]:
+        return {
+            str(label).strip().casefold(): float(value)
+            for label, value in json.loads(self.extraction_confidence_label_map).items()
+        }
 
     @property
     def is_demo_mode(self) -> bool:

@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -22,10 +23,74 @@ class FieldEvidence(BaseModel):
             return str(value)
         return value
 
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_model_confidence(cls, value):
+        # MiMo может вернуть качественную оценку словами вместо числа.
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if not normalized:
+                return None
+            # Ленивый импорт не создаёт цикл: конфиг использует CalculationRequest
+            # для проверки настроек, а распознавание вызывается уже после старта.
+            from .config import settings
+
+            mapped = settings.parsed_extraction_confidence_label_map.get(normalized)
+            if mapped is not None:
+                return mapped
+            try:
+                return float(normalized.replace(",", "."))
+            except ValueError:
+                return None
+        return None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_model_status(cls, value):
+        # Явный null от модели не должен отменять статус поля по умолчанию.
+        if not isinstance(value, str) or not value.strip():
+            return "extracted"
+        return value.strip()
+
 class DealExtraction(BaseModel):
     fields: list[FieldEvidence] = Field(default_factory=list)
     missing_fields: list[str] = Field(default_factory=list)
     contradictions: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("missing_fields", mode="before")
+    @classmethod
+    def normalize_missing_fields(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        return value
+
+    @field_validator("contradictions", mode="before")
+    @classmethod
+    def normalize_contradictions(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            # Пустой маркер вроде ": " не содержит противоречия.
+            if not text.strip(":;,.—- "):
+                return []
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError:
+                return [{"description": text}]
+        if isinstance(value, dict):
+            return [value]
+        if isinstance(value, list):
+            return [item if isinstance(item, dict) else {"description": str(item)} for item in value]
+        if isinstance(value, str) and value.strip():
+            return [{"description": value.strip()}]
+        return []
 
 class CalculationRequest(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)

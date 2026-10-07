@@ -113,3 +113,36 @@ def test_uploaded_documents_remain_available_when_model_extraction_fails(monkeyp
     assert "Техническое задание" in parsed["blocks"][0]["text"]
     deals = client.get("/api/deals").json()
     assert next(deal for deal in deals if deal["id"] == deal_id)["document_count"] == 1
+
+
+def test_model_qualitative_confidence_does_not_fail_document_pipeline(monkeypatch):
+    deal_id = create_deal()
+    document = WordDocument()
+    document.add_paragraph("Техническое задание на уборку офисного здания.")
+    binary = BytesIO()
+    document.save(binary)
+    uploaded = client.post(
+        f"/api/deals/{deal_id}/documents",
+        files=[("files", ("requirements.docx", binary.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))],
+    )
+    assert uploaded.status_code == 200
+
+    model_reply = {
+        "fields": [{"key": "area_m2", "label": "Площадь", "value": "1200", "unit": "м²", "confidence": "высокая", "status": None}],
+        "missing_fields": [],
+        "contradictions": ": ",
+    }
+    monkeypatch.setattr(
+        "app.main.gateway.structured",
+        lambda **kwargs: kwargs["schema"].model_validate(model_reply),
+    )
+
+    processed = client.post(f"/api/deals/{deal_id}/process")
+
+    assert processed.status_code == 200
+    fields = client.get(f"/api/deals/{deal_id}/fields").json()
+    assert fields[0]["confidence"] == 0.95
+    pipeline = client.get(f"/api/deals/{deal_id}/pipeline").json()
+    assert pipeline[0]["status"] == "success"
+    extraction_step = next(step for step in pipeline[0]["steps"] if step["name"] == "ai_extraction")
+    assert extraction_step["output"]["contradictions"] == []
