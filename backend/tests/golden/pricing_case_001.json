@@ -1,0 +1,24 @@
+{
+  "input": {
+    "area_m2": 1200,
+    "service_price_per_m2_month": 180,
+    "productivity_m2_per_shift": 800,
+    "monthly_hours_per_fte": 164,
+    "hourly_staff_cost": 350,
+    "replacement_coefficient": 1.12,
+    "manager_monthly_cost": 8000,
+    "materials_per_m2_month": 7,
+    "equipment_per_m2_month": 2,
+    "logistics_monthly": 3000,
+    "overhead_rate": 0.08,
+    "contingency_rate": 0.03,
+    "target_margin": 0.15,
+    "vat_rate": 0.22,
+    "contract_months": 12
+  },
+  "expected": {
+    "labor_hours_month": 264.0,
+    "fte": 1.61,
+    "physical_staff": 2
+  }
+}
