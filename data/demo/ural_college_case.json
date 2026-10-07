@@ -1,0 +1,15 @@
+{
+  "id": "ural_college_32616184101",
+  "title": "Уральский колледж бизнеса, управления и технологии красоты — комплексная уборка",
+  "registry_number": "32616184101",
+  "nmcd_rub": 4095641.51,
+  "period": "2026-08 — 2027-06",
+  "source_url": "https://tender.lot-online.ru/etp/app/LotCard/page?LotCard.lotEntity=LT%3Acorebo19718u80000puf28o848nus0fo",
+  "expected_documents": [
+    "НМЦК на оказание услуг по комплексной уборке зданий.xlsx",
+    "Техническое задание на клининг.docx",
+    "Документация запроса котировок.docx",
+    "Договор услуга.doc"
+  ],
+  "purpose": "Первый простой baseline-case для Upload → Parse → Extract → Review → Calculate."
+}
