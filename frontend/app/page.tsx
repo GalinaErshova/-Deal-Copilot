@@ -110,6 +110,7 @@ export default function Home(){
   const [highlightPath,setHighlightPath]=useState<string|null>(null);
   const [processProgress,setProcessProgress]=useState<ProcessProgress|null>(null);
   const [calc,setCalc]=useState<Calc|null>(null);
+  const [calculationDirty,setCalculationDirty]=useState(false);
   const [calculationConfirmed,setCalculationConfirmed]=useState(false);
   const [error,setError]=useState("");
   const [form,setForm]=useState<CalculationForm|null>(null);
@@ -173,7 +174,7 @@ export default function Home(){
     try{
       const d=await req("/deals?title="+encodeURIComponent("Демо: регулярный клининг офиса"),{method:"POST"});
       window.localStorage.setItem("dealCopilot.activeDealId",String(d.id));
-      setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setCalc(null);setCalculationConfirmed(false);setActive("upload");
+      setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("upload");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
   async function upload(files:FileList|null){
@@ -188,7 +189,7 @@ export default function Home(){
   }
   async function process(){
     if(!deal)return;
-    setCalculationConfirmed(false);setCalc(null);
+    setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
     setBusy(true);setError("");
     const previousRunId=Math.max(0,...runs.map(run=>run.id));
     let stopPolling=false;
@@ -245,7 +246,7 @@ export default function Home(){
       const numeric=Number(String(value).replace(",",".").replace(/[^0-9.\-]/g,""));
       if(Number.isFinite(numeric) && numeric>0) setForm(current=>current?({...current,area_m2:numeric}):current);
     }
-    setCalculationConfirmed(false);setCalc(null);
+    setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
     await refresh();
   }
   async function calculate(){
@@ -257,23 +258,25 @@ export default function Home(){
       const path=areaComponents.length?"/calculate-breakdown":"/calculate";
       const body=areaComponents.length?{confirmed:calculationConfirmed,assumptions:form,components:areaComponents.map(({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month})=>({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month}))}:form;
       const result=await req("/deals/"+deal.id+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      setCalc(result);setActive("economics");await refresh();
+      setCalc(result);setCalculationDirty(false);setActive("economics");await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
   function updateAreaComponent(id:string,patch:Partial<AreaComponent>){
     setAreaComponents(current=>current.map(component=>component.id===id?({...component,...patch}):component));
     setCalculationConfirmed(false);
-    setCalc(null);
+    setCalc(null);setCalculationDirty(false);
   }
 
   function updateScheduleMode(id:string,mode:ScheduleMode){
     updateAreaComponent(id,{schedule_mode:mode,shifts_per_month:shiftsForMode(mode,appSettings)});
   }
 
-  function updateCalculationValue(key:keyof CalculationForm,value:number){
+  function updateCalculationValue(key:keyof CalculationForm,value:number,preserveConfirmation=false){
     setForm(current=>current?({...current,[key]:value}):current);
-    setCalculationConfirmed(false);setCalc(null);
+    setError("");
+    if(preserveConfirmation){setCalculationDirty(true);return;}
+    setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
   }
 
   async function addManualArea(){
@@ -284,7 +287,7 @@ export default function Home(){
     try{
       await req("/deals/"+deal.id+"/fields/area",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:numeric})});
       setForm(current=>current?({...current,area_m2:numeric}):current);
-      setCalculationConfirmed(false);setCalc(null);
+      setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
       setManualArea("");await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
@@ -468,7 +471,7 @@ export default function Home(){
             {component.curation_warnings?.length?<p className="warning">Проверка строки: {component.curation_warnings.join("; ")}</p>:null}
           </div>)}
         </div>}
-        <label className="calculationConfirmation"><input type="checkbox" checked={calculationConfirmed} disabled={!calculationInputsReady} onChange={e=>setCalculationConfirmed(e.target.checked)}/><span><b>Подтверждаю расчёт целиком</b><small>Проверены площади и источники, режимы уборки, ставки выработки и общие параметры. При изменении любого значения подтверждение сбросится.</small></span></label>
+        <label className="calculationConfirmation"><input type="checkbox" checked={calculationConfirmed} disabled={!calculationInputsReady} onChange={e=>setCalculationConfirmed(e.target.checked)}/><span><b>Подтверждаю расчёт целиком</b><small>Проверены площади и источники, режимы уборки, ставки выработки и параметры трудоёмкости. При их изменении подтверждение сбросится. Финансовые параметры можно менять и пересчитывать на вкладке «Экономика».</small></span></label>
         <button className="primary" disabled={!criticalReady} onClick={calculate}>Рассчитать трудоёмкость и экономику</button>
         {!form&&<p className="empty">Загрузка настроек расчёта…</p>}
         {!calculationInputsReady&&<p className="warning">{areaComponents.length?"Заполните отсутствующую выработку или задайте режим и количество смен для всех строк.":"Расчёт заблокирован: подтвердите площадь в карточке требований."}</p>}
@@ -491,9 +494,19 @@ export default function Home(){
           {[
             ["service_price_per_m2_month",`Тариф, ${appSettings?.currency_unit_symbol??""}/м²/мес`],["materials_per_m2_month",`Материалы, ${appSettings?.currency_unit_symbol??""}/м²/мес`],
             ["equipment_per_m2_month",`Техника, ${appSettings?.currency_unit_symbol??""}/м²/мес`],["manager_monthly_cost",`Управление, ${appSettings?.currency_unit_symbol??""}/мес`],
-            ["logistics_monthly",`Логистика, ${appSettings?.currency_unit_symbol??""}/мес`],["target_margin","Целевая маржа"]
-          ].map(function(x){const k=x[0] as keyof CalculationForm;return form?<label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={form[k]} onChange={e=>updateCalculationValue(k,Number(e.target.value))}/></label>:null})}
-          <button onClick={calculate}>Пересчитать</button>
+            ["logistics_monthly",`Логистика, ${appSettings?.currency_unit_symbol??""}/мес`],["target_margin","Целевая маржа, %"]
+          ].map(function(x){
+            const k=x[0] as keyof CalculationForm;
+            if(!form)return null;
+            const percentageFactor=appSettings?.display_percentage_factor??100;
+            const displayValue=k==="target_margin"?form[k]*percentageFactor:form[k];
+            return <label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={displayValue} onChange={e=>{
+              const value=Number(e.target.value);
+              updateCalculationValue(k,k==="target_margin"?value/percentageFactor:value,true);
+            }}/></label>;
+          })}
+          <button disabled={busy} onClick={calculate}>Пересчитать</button>
+          {calculationDirty&&calc&&<p className="warning">Параметры изменены. Показан предыдущий результат — нажмите «Пересчитать».</p>}
         </div>
         {calc?<div className="kpis">
           <div><span>Выручка без НДС</span><b>{appSettings?money(calc.revenue_net,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.revenue_net}</b></div>
@@ -502,7 +515,7 @@ export default function Home(){
           <div><span>Маржа</span><b className={appSettings&&calc.margin<appSettings.no_bid_margin_threshold?"badText":calc.margin<(form?.target_margin??calc.margin)?"warnText":"goodText"}>{appSettings?((calc.margin*appSettings.display_percentage_factor).toFixed(appSettings.display_percentage_decimal_places)+"%"):calc.margin}</b></div>
           <div><span>Break-even</span><b>{appSettings?fmt(calc.break_even_price_per_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)+" "+appSettings.currency_unit_symbol+"/м²":calc.break_even_price_per_m2}</b></div>
           <div><span>Тариф для цели</span><b>{appSettings?fmt(calc.target_price_per_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)+" "+appSettings.currency_unit_symbol+"/м²":calc.target_price_per_m2}</b></div>
-        </div>:<div className="empty">Запустите расчёт на вкладке «Трудоёмкость».</div>}
+        </div>:<div className="empty">Сначала настройте и подтвердите исходные данные на вкладке «Трудоёмкость».</div>}
       </div>
       {calc&&appSettings&&<div className="sensitivity"><h3>Чувствительность к цене</h3>{calc.sensitivity.map(s=><div key={s.delta} className="sens"><span>{s.delta===0?appSettings.base_sensitivity_label:((s.delta>0?"+":"")+Math.round(s.delta*appSettings.display_percentage_factor)+"%")}</span><i style={{width:String(Math.max(appSettings.sensitivity_bar_min_width,Math.min(appSettings.sensitivity_bar_max_width,(s.margin+appSettings.sensitivity_bar_margin_offset)*appSettings.sensitivity_bar_scale))+"%")}}></i><b>{(s.margin*appSettings.display_percentage_factor).toFixed(appSettings.display_percentage_decimal_places)+"%"}</b></div>)}</div>}
     </section>}
