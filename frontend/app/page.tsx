@@ -78,10 +78,15 @@ export default function Home(){
   }
   async function saveField(row:Field,value:string){
     await req("/fields/"+row.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:value,confirmed:true})});
+    if(row.key==="area_m2"){
+      const numeric=Number(String(value).replace(",",".").replace(/[^0-9.\-]/g,""));
+      if(Number.isFinite(numeric) && numeric>0) setForm(current=>({...current,area_m2:numeric}));
+    }
     await refresh();
   }
   async function calculate(){
     if(!deal)return;
+    if(!criticalReady){setError("Подтвердите критическое поле «Площадь» перед расчётом.");setActive("review");return;}
     setBusy(true);setError("");
     try{
       const result=await req("/deals/"+deal.id+"/calculate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)});
@@ -94,6 +99,8 @@ export default function Home(){
     ["workforce","Трудоёмкость"],["economics","Экономика"],["decision","Решение"],["pipeline","Контроль"]
   ];
   const confirmed=fields.filter(x=>x.confirmed).length;
+  const areaField=fields.find(x=>x.key==="area_m2");
+  const criticalReady=!fields.length || Boolean(areaField?.confirmed && areaField.value);
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
 
   return <main>
@@ -156,7 +163,7 @@ export default function Home(){
     {active==="review"&&<section className="panel">
       <div className="sectionHead">
         <div><h2>Карточка требований</h2><p className="muted">Поля проверяются по источнику и подтверждаются пользователем.</p></div>
-        <button onClick={()=>setActive("workforce")}>К расчёту →</button>
+        <button disabled={!criticalReady} onClick={()=>setActive("workforce")}>{criticalReady?"К расчёту →":"Подтвердите площадь"}</button>
       </div>
       <div className="fields">
         {fields.map(f=><div className="field" key={f.id}>
@@ -179,7 +186,8 @@ export default function Home(){
           ["monthly_hours_per_fte","Фонд времени, ч/мес"],["hourly_staff_cost","Стоимость часа, ₽"],
           ["replacement_coefficient","Коэффициент замещения"]
         ].map(function(x){const k=x[0];return <label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={(form as any)[k]} onChange={e=>setForm({...form,[k]:Number(e.target.value)})}/></label>})}
-        <button className="primary" onClick={calculate}>Рассчитать трудоёмкость и экономику</button>
+        <button className="primary" disabled={!criticalReady} onClick={calculate}>Рассчитать трудоёмкость и экономику</button>
+        {!criticalReady&&<p className="warning">Расчёт заблокирован: подтвердите площадь в карточке требований.</p>}
       </div>
       <div className="calcPreview">
         <h2>Логика MVP-1</h2>
