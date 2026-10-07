@@ -415,7 +415,7 @@ export default function Home(){
       </div>
     </section>}
 
-    {active==="workforce"&&<section className="panel two">
+    {active==="workforce"&&<section className="panel">
       <div>
         <h2>Параметры расчёта</h2>
         {form&&[
@@ -458,12 +458,6 @@ export default function Home(){
         {!form&&<p className="empty">Загрузка настроек расчёта…</p>}
         {!calculationInputsReady&&<p className="warning">{areaComponents.length?"Заполните отсутствующую выработку или задайте режим и количество смен для всех строк.":"Расчёт заблокирован: подтвердите площадь в карточке требований."}</p>}
         {calculationInputsReady&&!calculationConfirmed&&<p className="muted">После проверки всех строк поставьте единое подтверждение, чтобы запустить расчёт.</p>}
-      </div>
-      <div className="calcPreview">
-        <h2>Логика MVP-1</h2>
-        <div className="formula">По каждой строке: площадь ÷ её выработка × смены в месяц × часы в смене → человеко-часы → FTE → численность</div>
-        <p className="muted">AI распознаёт и связывает исходные данные. Арифметику выполняет расчётный модуль, чтобы результат можно было перепроверить по формуле.</p>
-        {calc&&appSettings&&<><div className="bigMetric"><b>{fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</b><span>чел.-часов / мес.</span></div><div className="metrics"><div><b>{fmt(calc.fte,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</b><span>FTE</span></div><div><b>{calc.physical_staff}</b><span>физ. сотрудников</span></div></div></>}
       </div>
     </section>}
 
