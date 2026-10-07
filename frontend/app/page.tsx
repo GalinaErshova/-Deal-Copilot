@@ -10,6 +10,7 @@ type Field={id:number;key:string;label:string;value:string|null;unit?:string;con
 type Step={name:string;status:string;duration_ms?:number;input?:unknown;output?:unknown;warnings?:string[]};
 type Run={id:number;status:string;steps:Step[]};
 type ParsedBlock={kind:string;text:string;path:string;page_no?:number;title?:string;rows?:string[][]};
+type ParsedDocument={parser:string;blocks:ParsedBlock[];warnings?:string[]};
 type ProcessProgress={value:number;label:string};
 type Calc={calculation_id:number;labor_hours_month:number;fte:number;physical_staff:number;revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
@@ -33,6 +34,33 @@ function evidenceText(text:string,fragments:string[]){
   return parts;
 }
 
+// Переводит технический путь блока в понятное место документа для карточки требования.
+function sourceLocationLabel(location:string|undefined,parser:string|undefined){
+  if(!location)return "Место в документе не указано";
+  const path=location.split(/\s+page\s+/i)[0];
+  const page=location.match(/\bpage\s+(\d+)/i)?.[1];
+  const paragraph=path.match(/\/p\/(\d+)/)?.[1];
+  const table=path.match(/\/table\/(\d+)/)?.[1];
+  const sheet=path.match(/\/sheet\/(\d+)/)?.[1];
+  const slide=path.match(/\/slide\/(\d+)/)?.[1];
+  const block=paragraph?`Абзац ${paragraph}`:table?`Таблица ${table}`:sheet?`Лист ${sheet}`:slide?`Слайд ${slide}`:null;
+  const pageLabel=page?`${parser==="pptx"?"Слайд":"Страница"} ${page}`:null;
+  return [pageLabel,block].filter(Boolean).join(" · ")||"Фрагмент документа";
+}
+
+// Находит полное предложение или строку таблицы, где расположен проверенный фрагмент.
+function fullEvidenceQuote(parsed:ParsedDocument|undefined,location:string|undefined,fragment:string|undefined){
+  if(!fragment)return "Цитата не указана";
+  const path=location?.split(/\s+page\s+/i)[0];
+  const text=parsed?.blocks?.find(block=>block.path===path)?.text?.trim();
+  if(!text)return fragment;
+  const normalize=(value:string)=>value.replace(/\s+/g," ").trim().toLocaleLowerCase();
+  const normalizedFragment=normalize(fragment);
+  const sentence=text.split(/\n+|(?<=[.!?])\s+(?=[А-ЯЁA-Z«"(\d])/u)
+    .find(part=>normalize(part).includes(normalizedFragment));
+  return sentence?.trim()||(normalize(text).includes(normalizedFragment)?text:fragment);
+}
+
 function documentTable(rows:string[][]){
   if(!rows?.length)return null;
   return <div className="tablePreview"><table><tbody>{rows.map((row,rowIndex)=><tr key={rowIndex}>{row.map((cell,cellIndex)=>rowIndex===0
@@ -50,6 +78,8 @@ export default function Home(){
   const [busy,setBusy]=useState(false);
   const [selectedDoc,setSelectedDoc]=useState<number|null>(null);
   const [parsed,setParsed]=useState<any>(null);
+  // Кэш распознанных блоков для быстрого показа полной цитаты в карточках требований.
+  const [sourceParsed,setSourceParsed]=useState<Record<number,ParsedDocument>>({});
   const [highlightPath,setHighlightPath]=useState<string|null>(null);
   const [processProgress,setProcessProgress]=useState<ProcessProgress|null>(null);
   const [calc,setCalc]=useState<Calc|null>(null);
@@ -87,6 +117,15 @@ export default function Home(){
     }).catch((e:any)=>setError(e.message));
   },[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
+  useEffect(()=>{
+    const documentIds=[...new Set(fields.map(field=>field.source_document_id).filter((id):id is number=>Boolean(id)))].filter(id=>!sourceParsed[id]);
+    if(!documentIds.length)return;
+    let cancelled=false;
+    Promise.all(documentIds.map(async id=>[id,await req("/documents/"+id+"/parsed")] as const))
+      .then(entries=>{if(!cancelled&&entries.length)setSourceParsed(current=>({...current,...Object.fromEntries(entries)}))})
+      .catch(()=>{});
+    return()=>{cancelled=true};
+  },[fields,sourceParsed]);
 
   async function createDeal(){
     setBusy(true);setError("");
@@ -314,7 +353,7 @@ export default function Home(){
             <span>{f.unit}</span>
             <button className={f.confirmed?"confirmed":""} onClick={()=>saveField(f,f.value||"")}>{f.confirmed?"✓ Подтверждено":"Подтвердить"}</button>
           </div>
-          <details><summary>Источник</summary><p>{f.source_location||"Источник не указан"}</p><blockquote>{f.source_fragment||"Фрагмент будет доступен при реальном AI extraction."}</blockquote>{f.source_document_id&&<button onClick={()=>openDoc(f.source_document_id as number,(f.source_location||"").split(" ")[0])}>Открыть источник в сверке →</button>}</details>
+          <details><summary>Источник</summary><p className="sourceReference"><b>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote>{f.source_document_id&&<button onClick={()=>openDoc(f.source_document_id as number,(f.source_location||"").split(/\s+page\s+/i)[0])}>Открыть источник в сверке →</button>}</details>
         </div>)}
       </div>
     </section>}
