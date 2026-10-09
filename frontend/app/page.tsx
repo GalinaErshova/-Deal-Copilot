@@ -537,7 +537,7 @@ export default function Home(){
 
       <section className="sidebarDeal" aria-label="Текущая сделка">
         <span className="sidebarLabel">АКТИВНАЯ СДЕЛКА</span>
-        <strong>{deal?(deal.title||"Сделка #"+deal.id):"Сделка не создана"}</strong>
+        <strong>{deal?(appSettings?.demo_mode&&deal.title&&deal.title!=="Новая сделка"?deal.title:"Сделка #"+deal.id):"Сделка не создана"}</strong>
         <span className={"dealStatus "+(deal?"online":"idle")}><i/> {deal?deal.status:"Создайте сделку, чтобы начать"}</span>
       </section>
 
