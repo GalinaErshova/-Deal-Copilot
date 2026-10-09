@@ -1,0 +1,15 @@
+.env
+.env.local
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.next/
+data/*.db
+data/uploads/*
+!data/uploads/.gitkeep
+backend/data/*.db
+backend/data/uploads/*
+backend/deal_copilot_api.egg-info/
+.local-model/
+.DS_Store
