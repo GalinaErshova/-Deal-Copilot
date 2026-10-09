@@ -337,6 +337,7 @@ def list_deals(db: Session = Depends(get_db)):
             "status": deal.status,
             "created_at": deal.created_at,
             "document_count": len(deal.documents),
+            "processed_document_count": sum(1 for document in deal.documents if document.parse_status == "parsed"),
         }
         for deal in deals
     ]

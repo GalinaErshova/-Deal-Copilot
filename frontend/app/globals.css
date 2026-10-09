@@ -68,6 +68,18 @@ button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px 
 .dealStatus { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
 .dealStatus i, .modeDot { display: inline-block; width: 7px; height: 7px; flex: 0 0 7px; background: #72869a; border-radius: 50%; }
 .dealStatus.online i, .modeDot.live { background: var(--green); box-shadow: 0 0 11px #77e0b866; }
+.dealHistory { display: grid; gap: 8px; margin: 14px 0 2px; }
+.dealHistoryHeading { display: flex; align-items: center; justify-content: space-between; padding: 0 8px; }
+.dealHistoryHeading > span:last-child { color: #849bad; font-size: 10px; font-variant-numeric: tabular-nums; }
+.dealHistorySearch { min-width: 0; width: 100%; padding: 8px 9px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font-size: 10px; }
+.dealHistorySearch::placeholder { color: #8298aa; }
+.dealHistoryList { display: grid; max-height: 220px; gap: 4px; overflow-y: auto; padding-right: 2px; }
+button.dealHistoryItem { display: grid; min-width: 0; gap: 4px; padding: 9px 10px; color: #a3b5c5; text-align: left; background: transparent; border-color: transparent; border-radius: 8px; }
+button.dealHistoryItem:hover { color: var(--text); background: #102438; }
+button.dealHistoryItem.selected { color: var(--text); background: #112a3f; border-color: #244662; box-shadow: inset 2px 0 var(--green); }
+.dealHistoryItem b { overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.dealHistoryItem small { overflow: hidden; color: #8298aa; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.dealHistoryEmpty { margin: 0; padding: 0 8px; color: #8298aa; font-size: 10px; }
 
 .sidebarStats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 12px 0 25px; }
 .sidebarStats div { min-width: 0; padding: 11px 8px 10px; background: #0d1d2d; border: 1px solid var(--line-soft); border-radius: 11px; }
@@ -372,6 +384,8 @@ details summary { cursor: pointer; }
   .sidebarDeal .dealStatus { grid-column: 2; grid-row: 2; }
   .sidebarStats { margin: 8px 0 11px; }
   .sidebarStats div { padding: 7px 9px; }
+  .dealHistory { margin: 9px 0; }
+  .dealHistoryList { max-height: 132px; }
   .sideNav { display: flex; gap: 5px; padding: 0 0 3px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
   .sideNav > .sidebarLabel { display: none; }
   .sideNav button { display: flex; min-width: max-content; min-height: 38px; gap: 7px; padding: 7px 10px; font-size: 11px; }
@@ -441,8 +455,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .badge, .workspaceEyebrow, .panelStep { color: #3c6d5c; }
 .sidebarDeal, .sidebarStats div, .workspaceStep { background: #fff; border-color: var(--line-soft); }
 .sidebarLabel, .sidebarStats span, .sidebarFooter, .navIndex, .navArrow { color: #5e6361; }
+.dealHistoryHeading > span:last-child, .dealHistoryItem small, .dealHistoryEmpty { color: #737a76; }
+.dealHistorySearch { color: #202722; background: #fff; border-color: var(--line); }
+.dealHistorySearch::placeholder { color: #737a76; }
 .dealStatus, .sideNav button, .serviceNav button small { color: #454847; }
 .sideNav button:hover { color: var(--text); background: #eeefee; }
+.dealHistoryItem:hover { color: #202722; background: #f0f4f1; }
+button.dealHistoryItem.selected { color: #16352b; background: #e5eee9; border-color: #b2cbbd; box-shadow: inset 2px 0 #3c6d5c; }
 .sideNav button.active { color: #16352b; background: #e5eee9; border-color: #b2cbbd; box-shadow: inset 2px 0 #3c6d5c; }
 .sideNav button.active .navIndex { color: #275143; }
 .sidebarToggle { color: var(--text); background: #fff; border-color: var(--line); }

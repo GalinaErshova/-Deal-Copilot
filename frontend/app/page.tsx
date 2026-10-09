@@ -4,7 +4,7 @@ import {useEffect,useState,type ReactNode} from "react";
 
 const API=process.env.NEXT_PUBLIC_API_URL || "";
 
-type Deal={id:number;title:string;status:string;document_count?:number};
+type Deal={id:number;title:string;status:string;document_count?:number;processed_document_count?:number;created_at?:string};
 type Doc={id:number;filename:string;parser?:string;confidence?:string;status:string;warnings:string[]};
 type Field={id:number;key:string;label:string;value:string|null;unit?:string;confidence?:number;status:string;source_document_id?:number;source_location?:string;source_fragment?:string;confirmed:boolean};
 type Step={name:string;status:string;duration_ms?:number;input?:unknown;output?:unknown;warnings?:string[]};
@@ -29,6 +29,9 @@ type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:nu
 
 const fmt=(n:number,locale:string,digits:number)=>new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(n);
 const money=(n:number,locale:string,currency:string,digits:number)=>new Intl.NumberFormat(locale,{style:"currency",currency,maximumFractionDigits:digits}).format(n);
+const visibleDealTitle=(deal:Deal,all:Deal[]=[])=>!deal.title||deal.title==="Новая сделка"||/\b(demo|демо|mvp)\b/i.test(deal.title)||all.filter(item=>item.title===deal.title).length>1?`Сделка #${deal.id}`:deal.title;
+const dealStageLabel=(deal:Deal)=>deal.status==="calculated"?"Расчёт готов":(deal.processed_document_count||0)>0?"Обработана":(deal.document_count||0)>0?"Документы загружены":"Черновик";
+const dealStartStage=(deal:Deal)=>deal.status==="calculated"?"economics":(deal.processed_document_count||0)>0?"review":(deal.document_count||0)>0?"documents":"upload";
 const shiftsForMode=(mode:ScheduleMode,settings:AppSettings|null):number|null=>{
   if(!settings)return null;
   if(mode==="daily")return settings.working_days_per_month;
@@ -97,6 +100,8 @@ function documentTable(rows:string[][]){
 
 export default function Home(){
   const [deal,setDeal]=useState<Deal|null>(null);
+  const [deals,setDeals]=useState<Deal[]>([]);
+  const [dealSearch,setDealSearch]=useState("");
   const [appSettings,setAppSettings]=useState<AppSettings|null>(null);
   const [docs,setDocs]=useState<Doc[]>([]);
   const [fields,setFields]=useState<Field[]>([]);
@@ -151,7 +156,8 @@ export default function Home(){
       req("/deals/"+deal.id+"/pipeline"),
       req("/deals/"+deal.id+"/area-components"),
       req("/deals/"+deal.id+"/calculations"),
-      req("/deals/"+deal.id+"/organization-profile")
+      req("/deals/"+deal.id+"/organization-profile"),
+      req("/deals")
     ]);
     setDocs(all[0]);setFields(all[1]);setRuns(all[2]);
     const latestCalculation:SavedCalculation|undefined=all[4]?.[0];
@@ -176,15 +182,18 @@ export default function Home(){
         shifts_per_month:previous?.shifts_per_month??saved?.shifts_per_month??source.shifts_per_month};
     }));
     setOrganizationProfile(all[5]||{});
+    setDeals(all[6]||[]);
+    setDeal(current=>current?(all[6]||[]).find((item:Deal)=>item.id===current.id)||current:current);
   }
   useEffect(()=>{
     Promise.all([req("/settings"),req("/deals")]).then(([s,deals]:[AppSettings,Deal[]])=>{
       setAppSettings(s);setForm(s.calculation_defaults);
+      setDeals(deals);
       const savedId=Number(window.localStorage.getItem("dealCopilot.activeDealId"));
-      const selected=deals.find(d=>d.id===savedId)||deals.find(d=>(d.document_count||0)>0)||deals[0];
+      const selected=deals.find(d=>d.id===savedId)||deals.find(d=>d.status==="calculated")||deals.find(d=>(d.processed_document_count||0)>0)||deals.find(d=>(d.document_count||0)>0)||deals[0];
       if(selected){
         window.localStorage.setItem("dealCopilot.activeDealId",String(selected.id));
-        setDeal(selected);setActive((selected.document_count||0)>0?"documents":"upload");
+        setDeal(selected);setActive(dealStartStage(selected));
       }
     }).catch((e:any)=>setError(e.message));
   },[]);
@@ -227,10 +236,21 @@ export default function Home(){
     try{
       const d=await req("/deals?title="+encodeURIComponent("Новая сделка"),{method:"POST"});
       window.localStorage.setItem("dealCopilot.activeDealId",String(d.id));
+      setDeals(current=>[d,...current.filter(item=>item.id!==d.id)]);
       setOrganizationProfile({});setProposalTouched(new Set());
       setProposalForm(current=>({...current,customer_name:"",customer_address:"",customer_inn:"",customer_kpp:"",customer_ogrn:"",customer_contact_person:"",customer_phone:"",customer_email:""}));
       setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setForm(appSettings?.calculation_defaults??null);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("upload");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+  function returnToDeal(selected:Deal){
+    if(busy||selected.id===deal?.id)return;
+    window.localStorage.setItem("dealCopilot.activeDealId",String(selected.id));
+    setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setSelectedDoc(null);setParsed(null);setHighlightPath(null);
+    setOrganizationProfile({});setProposalTouched(new Set());
+    setProposalForm(current=>({...current,customer_name:"",customer_address:"",customer_inn:"",customer_kpp:"",customer_ogrn:"",customer_contact_person:"",customer_phone:"",customer_email:""}));
+    setForm(appSettings?.calculation_defaults??null);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setProcessProgress(null);setDocumentsCollapsed(false);
+    setActive(dealStartStage(selected));
+    setDeal(selected);
   }
   async function upload(files:FileList|null){
     if(!deal||!files||!files.length)return;
@@ -527,6 +547,7 @@ export default function Home(){
   const calculationInputsReady=Boolean(form&&(areaComponents.length?areaBreakdownReady:areaField?.confirmed&&areaField.value));
   const criticalReady=Boolean(calculationInputsReady&&calculationConfirmed);
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
+  const visibleDeals=deals.filter(item=>!dealSearch.trim()||`${visibleDealTitle(item,deals)} ${item.id} ${item.title} ${dealStageLabel(item)}`.toLocaleLowerCase("ru-RU").includes(dealSearch.trim().toLocaleLowerCase("ru-RU")));
 
   return <div className={"appShell "+(sidebarCollapsed?"sidebarCollapsed":"")}>
     {!sidebarCollapsed&&<aside className="sidebar">
@@ -540,6 +561,15 @@ export default function Home(){
         <strong>{deal?(appSettings?.demo_mode&&deal.title&&deal.title!=="Новая сделка"?deal.title:"Сделка #"+deal.id):"Сделка не создана"}</strong>
         <span className={"dealStatus "+(deal?"online":"idle")}><i/> {deal?deal.status:"Создайте сделку, чтобы начать"}</span>
       </section>
+
+      <nav className="dealHistory" aria-label="История сделок">
+        <div className="dealHistoryHeading"><span className="sidebarLabel">ИСТОРИЯ СДЕЛОК</span><span>{visibleDeals.length}/{deals.length}</span></div>
+        {deals.length>0&&<input className="dealHistorySearch" aria-label="Поиск по сделкам" placeholder="Поиск по номеру или названию" value={dealSearch} onChange={event=>setDealSearch(event.target.value)}/>}
+        {visibleDeals.length?<div className="dealHistoryList">{visibleDeals.map(item=><button type="button" key={item.id} className={item.id===deal?.id?"dealHistoryItem selected":"dealHistoryItem"} aria-current={item.id===deal?.id?"page":undefined} title={visibleDealTitle(item,deals)} disabled={busy} onClick={()=>returnToDeal(item)}>
+          <b>{visibleDealTitle(item,deals)}</b>
+          <small>{item.processed_document_count||0}/{item.document_count||0} документов · {dealStageLabel(item)}{item.created_at?` · ${new Date(item.created_at).toLocaleDateString("ru-RU",{day:"2-digit",month:"short"})}`:""}</small>
+        </button>)}</div>:<p className="dealHistoryEmpty">{deals.length?"Сделки не найдены":"Пока нет сохранённых сделок"}</p>}
+      </nav>
 
       <section className="sidebarStats" aria-label="Сводка по сделке">
         <div><b>{docs.length}</b><span>документов</span></div>
