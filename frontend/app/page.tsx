@@ -19,7 +19,7 @@ type AreaComponent={id:string;origin?:"document"|"manual";manual_line_id?:number
 type FormulaSetting={key:string;label:string;description:string;expression:string;default_expression:string;variables:string[]};
 type PriceListItem={id:number;name:string;area_type:string;work_type:string;price_per_m2_month:number;productivity_m2_per_shift:number|null;notes:string|null;is_active:boolean};
 type DemoProviderTariff={id:string;provider:string;city:string;object_type:string;service:string;area_range:string|null;price_min:number|null;price_max:number|null;price_unit:string;source_url:string;source_date:string;source_dataset:string;evidence:string;details:string|null};
-type DemoProviderTariffs={notice:string;items:DemoProviderTariff[]};
+type DemoProviderTariffs={notice:string;featured_ids:string[];items:DemoProviderTariff[]};
 type PriceListDraft={name:string;area_type:string;work_type:string;price_per_m2_month:string;productivity_m2_per_shift:string;notes:string};
 type ManualServiceDraft={address:string;area_type:string;work_type:string;area_m2:string;price_list_item_id:string;price_per_m2_month:string;productivity_m2_per_shift:string};
 type Calc={calculation_id:number;area_m2?:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
@@ -765,6 +765,7 @@ export default function Home(){
       </div>
       {priceListView==="catalog"?<div className="companyPriceList">
         <div className="sectionHead"><div><h2>Прайс-лист компании</h2><p className="muted">Добавьте типовые услуги и их тарифы. Позиции доступны при заполнении требований; архивные записи сохраняются в ранее созданных сделках.</p></div></div>
+        {priceListItems.some(item=>item.name.startsWith("ДЕМО ·"))&&<div className="demoTariffNotice"><b>В каталоге есть тестовые цены.</b> Названия начинаются с «ДЕМО». Это условные ставки для проверки сценария КП, а не подтверждённый прайс компании. Перед реальным предложением замените их.</div>}
         <div className="priceListDraft">
           <label>Название в списке<input value={priceListDraft.name} onChange={e=>setPriceListDraft({...priceListDraft,name:e.target.value})} placeholder="Комплексная уборка помещений"/></label>
           <label>Вид площади<input value={priceListDraft.area_type} onChange={e=>setPriceListDraft({...priceListDraft,area_type:e.target.value})} placeholder="Помещения, территория"/></label>
@@ -775,7 +776,7 @@ export default function Home(){
           <button className="primary" type="button" disabled={priceListBusy} onClick={()=>void createPriceListItem()}>{priceListBusy?"Сохраняю…":"Добавить в прайс-лист"}</button>
         </div>
         {priceListItems.length===0?<div className="empty">Прайс-лист пока пуст. Добавьте первую услугу выше.</div>:<div className="priceListRows">{priceListItems.map(item=><article className={"priceListRow "+(!item.is_active?"archived":"")} key={item.id}>
-          <div className="priceListRowHead"><b>{item.name||"Новая услуга"}</b><span>{item.is_active?"Доступна для выбора":"В архиве"}</span><button type="button" disabled={priceListBusy} onClick={()=>void archivePriceListItem(item)}>{item.is_active?"В архив":"Вернуть в прайс"}</button></div>
+          <div className="priceListRowHead"><b>{item.name||"Новая услуга"}</b><span>{item.name.startsWith("ДЕМО ·")?"Демо · замените перед реальным КП":item.is_active?"Доступна для выбора":"В архиве"}</span><button type="button" disabled={priceListBusy} onClick={()=>void archivePriceListItem(item)}>{item.is_active?"В архив":"Вернуть в прайс"}</button></div>
           <div className="priceListFields">
             <label>Название<input value={item.name} onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,name:e.target.value}):row))} onBlur={e=>void savePriceListItem(item.id,{name:e.target.value})}/></label>
             <label>Вид площади<input value={item.area_type} onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,area_type:e.target.value}):row))} onBlur={e=>void savePriceListItem(item.id,{area_type:e.target.value})}/></label>
@@ -790,6 +791,12 @@ export default function Home(){
         <div className="sectionHead"><div><h2>Справочник тарифов исполнителей</h2><p className="muted">Цены из демонстрационных прайс-листов для сравнения предложений и тестовых сценариев.</p></div></div>
         <div className="demoTariffNotice"><b>Справочные демо-данные.</b> Это не прайс вашей компании. Период и условия указаны только там, где они явно присутствуют в источнике. Перед использованием проверьте актуальную цену у исполнителя. Ставки не подставляются в расчёт КП автоматически.</div>
         <label className="demoTariffSearch">Поиск по исполнителю, объекту или услуге<input value={demoTariffQuery} onChange={event=>setDemoTariffQuery(event.target.value)} placeholder="Например, офис или генеральная уборка"/></label>
+        {demoProviderTariffs&&<div className="demoFeatured"><h3>Несколько примеров для быстрого просмотра</h3><div className="demoFeaturedRows">{demoProviderTariffs.items.filter(item=>demoProviderTariffs.featured_ids.includes(item.id)).map(item=><article className="demoFeaturedRow" key={item.id}>
+          <div><b>{item.provider}</b><span>{item.object_type} · {item.service}</span></div>
+          <strong>{item.price_min===null?"Договорная":item.price_max===null?`от ${fmt(item.price_min,"ru-RU",2)}`:`${fmt(item.price_min,"ru-RU",2)}–${fmt(item.price_max,"ru-RU",2)}`} {item.price_unit}</strong>
+          <small>{item.area_range?`Диапазон площади: ${item.area_range} м² · `:""}{item.details&&`${item.details} `}{item.evidence}</small>
+          <a href={item.source_url} target="_blank" rel="noreferrer">Источник ↗</a>
+        </article>)}</div></div>}
         {demoProviderTariffs&&[...new Set(demoProviderTariffs.items.map(item=>item.provider))].map(provider=>{
           const query=demoTariffQuery.trim().toLocaleLowerCase("ru-RU");
           const entries=demoProviderTariffs.items.filter(item=>item.provider===provider&&(!query||[item.provider,item.city,item.object_type,item.service,item.area_range||""].join(" ").toLocaleLowerCase("ru-RU").includes(query)));

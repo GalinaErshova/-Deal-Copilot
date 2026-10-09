@@ -91,6 +91,15 @@ def seed() -> None:
             if key not in existing_formula_keys:
                 db.add(CalculationFormula(key=key,expression=expression))
         db.commit()
+        # Загружаем демонстрационные услуги только в пустой прайс-лист,
+        # чтобы при перезапуске не затронуть введённые пользователем позиции.
+        if db.query(PriceListItem).count()==0:
+            demo_catalog_path=Path(__file__).resolve().parents[2]/"data"/"demo"/"company-price-list.json"
+            if demo_catalog_path.is_file():
+                demo_catalog=json.loads(demo_catalog_path.read_text(encoding="utf-8"))
+                for item in demo_catalog.get("items",[]):
+                    db.add(PriceListItem(**item))
+                db.commit()
     finally:
         db.close()
 seed()

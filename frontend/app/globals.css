@@ -295,6 +295,15 @@ details summary { cursor: pointer; }
 .demoTariffNotice { padding: 13px 15px; color: #f2dfb5; background: #322a18; border: 1px solid #655127; border-radius: 9px; line-height: 1.55; }
 .demoTariffSearch { display: grid; max-width: 520px; gap: 6px; color: #acc1d1; font-size: 12px; }
 .demoTariffSearch input { padding: 10px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
+.demoFeatured { display: grid; gap: 10px; }
+.demoFeatured h3 { margin: 3px 0; font-size: 15px; }
+.demoFeaturedRows { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+.demoFeaturedRow { display: grid; gap: 7px; padding: 13px; background: #0a1826; border: 1px solid #29465e; border-radius: 9px; }
+.demoFeaturedRow > div { display: grid; gap: 3px; }
+.demoFeaturedRow > div span, .demoFeaturedRow small { color: #91a9bb; font-size: 11px; line-height: 1.5; }
+.demoFeaturedRow strong { color: #c8e5f6; font-size: 12px; line-height: 1.45; }
+.demoFeaturedRow a { justify-self: start; color: #78dfbc; font-size: 12px; text-decoration: none; }
+.demoFeaturedRow a:hover { text-decoration: underline; }
 .demoTariffProvider { overflow: hidden; background: #0a1826; border: 1px solid #19334c; border-radius: 11px; }
 .demoTariffProvider > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 14px 16px; cursor: pointer; list-style-position: inside; }
 .demoTariffProvider > summary span { color: #8ba7bc; font-size: 12px; }
@@ -307,6 +316,7 @@ details summary { cursor: pointer; }
 .demoTariffSource a:hover { text-decoration: underline; }
 @media (max-width: 900px) { .priceListDraft, .priceListFields { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 900px) { .demoTariffRow { grid-template-columns: 1fr 1fr; } .demoTariffSource { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .demoFeaturedRows { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .areaComponentInputs, .areaSchedule, .manualServiceFields, .manualServiceForm { grid-template-columns: 1fr; } .areaTotal { align-items: flex-start; flex-direction: column; } }
 .control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 150px); align-items: center; gap: 15px; margin: 9px 0; }
 .control input { min-width: 0; padding: 9px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 8px; }
