@@ -188,7 +188,7 @@ details summary { cursor: pointer; }
 .manualServiceFields, .manualServiceForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
 .manualServiceFields { margin-top: 10px; }
 .manualServiceFields label, .manualServiceForm label, .formulaSetting label { display: grid; min-width: 0; gap: 5px; color: #acc1d1; font-size: 12px; }
-.manualServiceFields input, .manualServiceForm input, .formulaSetting input { min-width: 0; width: 100%; padding: 9px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
+.manualServiceFields input, .manualServiceFields select, .manualServiceForm input, .manualServiceForm select, .formulaSetting input { min-width: 0; width: 100%; padding: 9px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
 .manualServiceForm button { align-self: end; }
 .dangerButton { color: #ff9eaa; border-color: #773b49; }
 .areaComponents { display: grid; gap: 12px; margin: 18px 0; }
@@ -276,6 +276,23 @@ details summary { cursor: pointer; }
 .formulaSetting label { margin: 12px 0 7px; }
 .formulaSetting small { display: block; overflow-wrap: anywhere; }
 .formulaActions { display: flex; flex-wrap: wrap; gap: 10px; }
+.settingsSwitcher { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 13px; border-bottom: 1px solid #203a50; }
+.settingsSwitcher button { padding: 9px 14px; color: #b6cad9; background: #0a1826; border: 1px solid #29465e; border-radius: 8px; }
+.settingsSwitcher button.selected { color: #06131d; background: #78dfbc; border-color: #78dfbc; font-weight: 700; }
+.companyPriceList { display: grid; gap: 14px; }
+.priceListDraft, .priceListFields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 11px; }
+.priceListDraft { padding: 15px; background: #0a1826; border: 1px solid #19334c; border-radius: 11px; }
+.priceListDraft label, .priceListFields label { display: grid; min-width: 0; gap: 5px; color: #acc1d1; font-size: 12px; }
+.priceListDraft input, .priceListFields input { min-width: 0; width: 100%; padding: 9px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
+.priceListDraft button { align-self: end; justify-self: start; }
+.priceListRows { display: grid; gap: 10px; }
+.priceListRow { display: grid; gap: 12px; padding: 14px; background: #0a1826; border: 1px solid #19334c; border-radius: 11px; }
+.priceListRow.archived { opacity: .72; }
+.priceListRowHead { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.priceListRowHead b { margin-right: auto; }
+.priceListRowHead span { color: #8bd5b7; font-size: 12px; }
+.priceListRow.archived .priceListRowHead span { color: #a4b3bf; }
+@media (max-width: 900px) { .priceListDraft, .priceListFields { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 760px) { .areaComponentInputs, .areaSchedule, .manualServiceFields, .manualServiceForm { grid-template-columns: 1fr; } .areaTotal { align-items: flex-start; flex-direction: column; } }
 .control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 150px); align-items: center; gap: 15px; margin: 9px 0; }
 .control input { min-width: 0; padding: 9px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 8px; }

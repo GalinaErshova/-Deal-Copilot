@@ -15,8 +15,11 @@ type OrganizationSource={value:string;document_id:number;document_name:string;so
 type OrganizationProfile=Record<string,OrganizationSource>;
 type ProcessProgress={value:number;label:string};
 type ScheduleMode="daily"|"weekly"|"monthly"|"on_request"|"custom"|"unspecified";
-type AreaComponent={id:string;origin?:"document"|"manual";manual_line_id?:number;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number|null;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;monthly_price?:number;contract_price?:number;labor_hours_month?:number;fte?:number;physical_staff?:number};
+type AreaComponent={id:string;origin?:"document"|"manual";manual_line_id?:number;price_list_item_id?:number|null;price_per_m2_month?:number|null;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number|null;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;monthly_price?:number;contract_price?:number;labor_hours_month?:number;fte?:number;physical_staff?:number};
 type FormulaSetting={key:string;label:string;description:string;expression:string;default_expression:string;variables:string[]};
+type PriceListItem={id:number;name:string;area_type:string;work_type:string;price_per_m2_month:number;productivity_m2_per_shift:number|null;notes:string|null;is_active:boolean};
+type PriceListDraft={name:string;area_type:string;work_type:string;price_per_m2_month:string;productivity_m2_per_shift:string;notes:string};
+type ManualServiceDraft={address:string;area_type:string;work_type:string;area_m2:string;price_list_item_id:string;price_per_m2_month:string;productivity_m2_per_shift:string};
 type Calc={calculation_id:number;area_m2?:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
 type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
@@ -105,7 +108,11 @@ export default function Home(){
   const [proposalTouched,setProposalTouched]=useState<Set<string>>(new Set());
   const [formulaSettings,setFormulaSettings]=useState<FormulaSetting[]>([]);
   const [formulaBusy,setFormulaBusy]=useState(false);
-  const [manualServiceDraft,setManualServiceDraft]=useState({address:"",area_type:"Площадь объекта",work_type:"",area_m2:""});
+  const [priceListItems,setPriceListItems]=useState<PriceListItem[]>([]);
+  const [priceListView,setPriceListView]=useState<"catalog"|"formulas">("catalog");
+  const [priceListDraft,setPriceListDraft]=useState<PriceListDraft>({name:"",area_type:"Площадь объекта",work_type:"",price_per_m2_month:"",productivity_m2_per_shift:"",notes:""});
+  const [priceListBusy,setPriceListBusy]=useState(false);
+  const [manualServiceDraft,setManualServiceDraft]=useState<ManualServiceDraft>({address:"",area_type:"Площадь объекта",work_type:"",area_m2:"",price_list_item_id:"",price_per_m2_month:"",productivity_m2_per_shift:""});
   const [busy,setBusy]=useState(false);
   const [selectedDoc,setSelectedDoc]=useState<number|null>(null);
   const [parsed,setParsed]=useState<any>(null);
@@ -168,6 +175,7 @@ export default function Home(){
     }).catch((e:any)=>setError(e.message));
   },[]);
   useEffect(()=>{req("/formulas").then(setFormulaSettings).catch((e:any)=>setError(e.message))},[]);
+  useEffect(()=>{req("/price-list").then(setPriceListItems).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
   useEffect(()=>{
     const profileFields=["customer_name","customer_address","customer_inn","customer_kpp","customer_ogrn","customer_contact_person","customer_phone","customer_email"] as const;
@@ -301,7 +309,7 @@ export default function Home(){
     setBusy(true);setError("");
     try{
       const path=areaComponents.length?"/calculate-breakdown":"/calculate";
-      const body=areaComponents.length?{confirmed:calculationConfirmed,assumptions:form,components:areaComponents.map(({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month})=>({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month}))}:form;
+      const body=areaComponents.length?{confirmed:calculationConfirmed,assumptions:form,components:areaComponents.map(({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month,price_per_m2_month})=>({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month,price_per_m2_month}))}:form;
       const result=await req("/deals/"+deal.id+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       setCalc(result);setCalculationDirty(false);setActive("economics");await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
@@ -360,16 +368,21 @@ export default function Home(){
     }
     setBusy(true);setError("");
     try{
+      const price=Number(manualServiceDraft.price_per_m2_month.replace(",","."));
+      const productivity=Number(manualServiceDraft.productivity_m2_per_shift.replace(",","."));
       await req(`/deals/${deal.id}/area-components/manual`,{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({...manualServiceDraft,address:manualServiceDraft.address.trim(),work_type:manualServiceDraft.work_type.trim(),area_m2:area})});
-      setManualServiceDraft({address:"",area_type:"Площадь объекта",work_type:"",area_m2:""});
+        body:JSON.stringify({...manualServiceDraft,address:manualServiceDraft.address.trim(),work_type:manualServiceDraft.work_type.trim(),area_m2:area,
+          price_list_item_id:manualServiceDraft.price_list_item_id?Number(manualServiceDraft.price_list_item_id):null,
+          price_per_m2_month:Number.isFinite(price)&&price>0?price:null,
+          productivity_m2_per_shift:Number.isFinite(productivity)&&productivity>0?productivity:null})});
+      setManualServiceDraft({address:"",area_type:"Площадь объекта",work_type:"",area_m2:"",price_list_item_id:"",price_per_m2_month:"",productivity_m2_per_shift:""});
       setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
   async function saveManualServiceLine(line:AreaComponent,patch:Partial<AreaComponent>){
     if(!deal||!line.manual_line_id)return;
-    const payload=Object.fromEntries(Object.entries(patch).filter(([key])=>["address","area_type","work_type","area_m2","schedule_mode","shifts_per_month","productivity_m2_per_shift"].includes(key)));
+    const payload=Object.fromEntries(Object.entries(patch).filter(([key])=>["address","area_type","work_type","area_m2","schedule_mode","shifts_per_month","productivity_m2_per_shift","price_list_item_id","price_per_m2_month"].includes(key)));
     if(!Object.keys(payload).length)return;
     try{
       await req(`/deals/${deal.id}/area-components/manual/${line.manual_line_id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -393,6 +406,61 @@ export default function Home(){
     }catch(e:any){setError(e.message)}finally{setFormulaBusy(false)}
   }
 
+  function selectPriceListItem(id:string){
+    const item=priceListItems.find(entry=>entry.id===Number(id));
+    setManualServiceDraft(current=>item?({...current,price_list_item_id:id,area_type:item.area_type,work_type:item.work_type,
+      price_per_m2_month:String(item.price_per_m2_month),productivity_m2_per_shift:item.productivity_m2_per_shift===null?"":String(item.productivity_m2_per_shift)}):
+      ({...current,price_list_item_id:""}));
+  }
+
+  function applyPriceListItemToLine(line:AreaComponent,id:string){
+    const item=priceListItems.find(entry=>entry.id===Number(id));
+    const patch:Partial<AreaComponent>=item?{price_list_item_id:item.id,area_type:item.area_type,work_type:item.work_type,
+      price_per_m2_month:item.price_per_m2_month,productivity_m2_per_shift:item.productivity_m2_per_shift}:
+      {price_list_item_id:null};
+    updateAreaComponent(line.id,patch);
+    void saveManualServiceLine(line,patch);
+  }
+
+  async function createPriceListItem(){
+    const price=Number(priceListDraft.price_per_m2_month.replace(",","."));
+    const productivity=Number(priceListDraft.productivity_m2_per_shift.replace(",","."));
+    if(!priceListDraft.name.trim()||!priceListDraft.work_type.trim()||!Number.isFinite(price)||price<=0){
+      setError("Укажите название услуги, описание работ и положительный тариф за м² в месяц.");return;
+    }
+    setPriceListBusy(true);setError("");
+    try{
+      const item=await req("/price-list",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+        ...priceListDraft,name:priceListDraft.name.trim(),area_type:priceListDraft.area_type.trim()||"Площадь объекта",
+        work_type:priceListDraft.work_type.trim(),price_per_m2_month:price,
+        productivity_m2_per_shift:Number.isFinite(productivity)&&productivity>0?productivity:null,
+        notes:priceListDraft.notes.trim()||null})});
+      setPriceListItems(current=>[...current,item]);
+      setPriceListDraft({name:"",area_type:"Площадь объекта",work_type:"",price_per_m2_month:"",productivity_m2_per_shift:"",notes:""});
+    }catch(e:any){setError(e.message)}finally{setPriceListBusy(false)}
+  }
+
+  async function savePriceListItem(id:number,patch:Partial<Omit<PriceListItem,"id">>){
+    setError("");
+    if(patch.price_per_m2_month!==undefined&&(!Number.isFinite(patch.price_per_m2_month)||patch.price_per_m2_month<=0)){
+      setError("Тариф должен быть положительным числом.");return;
+    }
+    try{
+      const saved=await req(`/price-list/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});
+      setPriceListItems(current=>current.map(item=>item.id===id?saved:item));
+      if(calc)setCalculationDirty(true);
+    }catch(e:any){setError(e.message);const items=await req("/price-list").catch(()=>null);if(items)setPriceListItems(items)}
+  }
+
+  async function archivePriceListItem(item:PriceListItem){
+    setPriceListBusy(true);setError("");
+    try{
+      const saved=await req(`/price-list/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})});
+      setPriceListItems(current=>current.map(entry=>entry.id===item.id?saved:entry));
+      if(calc)setCalculationDirty(true);
+    }catch(e:any){setError(e.message)}finally{setPriceListBusy(false)}
+  }
+
   const tabs=[
     {key:"upload",label:"Новая сделка",title:"Рабочее пространство",description:"Создайте сделку и загрузите тендерные материалы."},
     {key:"documents",label:"Документы",title:"Документы",description:"Сопоставьте оригинал файла с результатом разбора."},
@@ -402,7 +470,7 @@ export default function Home(){
     {key:"proposal",label:"Коммерческое предложение",title:"Формирование КП",description:"Подготовьте редактируемый проект коммерческого предложения по подтверждённым данным."},
   ];
   const serviceTab={key:"pipeline",label:"Контроль обработки",title:"Контроль обработки",description:"Служебная информация о шагах распознавания и расчёта."};
-  const formulaTab={key:"settings",label:"Настройки расчёта",title:"Настройки формул",description:"Просмотр и редактирование формул трудоёмкости, стоимости и маржинальности."};
+  const formulaTab={key:"settings",label:"Настройки",title:"Настройки компании",description:"Прайс-лист услуг и формулы расчёта."};
   const currentTab=tabs.find(tab=>tab.key===active)??(active==="pipeline"?serviceTab:active==="settings"?formulaTab:tabs[0]);
   const stageIndex=tabs.findIndex(tab=>tab.key===active);
   const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
@@ -450,7 +518,7 @@ export default function Home(){
           <span className="navIndex">⚙</span><span><b>Контроль обработки</b><small>Журнал шагов и ошибок</small></span><span className="navArrow" aria-hidden="true">→</span>
         </button>
         <button className={active==="settings"?"active":""} aria-current={active==="settings"?"page":undefined} onClick={()=>setActive("settings")}>
-          <span className="navIndex">⚙</span><span><b>Настройки расчёта</b><small>Формулы и маржа</small></span><span className="navArrow" aria-hidden="true">→</span>
+          <span className="navIndex">⚙</span><span><b>Настройки компании</b><small>Прайс-лист и формулы</small></span><span className="navArrow" aria-hidden="true">→</span>
         </button>
       </nav>
 
@@ -547,22 +615,27 @@ export default function Home(){
         </div>)}
       </div>
       <div className="manualServices">
-        <div><h3>Требуемые услуги</h3><p className="muted">Строки из тендерных документов и добавленные вручную участвуют в расчёте. Для ручной строки задайте площадь и вид работ здесь, затем на вкладке «Трудоёмкость» заполните выработку и режим.</p></div>
+        <div><h3>Требуемые услуги</h3><p className="muted">Выберите услугу из прайс-листа компании: её вид работ, тариф и норматив подставятся в строку. Площадь и адрес заполните для этой сделки. Цена и норматив останутся редактируемыми.</p></div>
         {areaComponents.map(component=><div className="manualServiceRow" key={component.id}>
           <div className="manualServiceRowHead"><b>{component.origin==="manual"?"Ручная строка":"Из документа"}</b>{component.origin!=="manual"&&sourceArrow(component.source_document_id,component.source_location,`Открыть источник строки ${component.address}`,component.source_document_name)}</div>
           {component.origin==="manual"?<div className="manualServiceFields">
+            <label>Позиция прайс-листа<select value={component.price_list_item_id??""} onChange={e=>applyPriceListItemToLine(component,e.target.value)}><option value="">Своя услуга</option>{priceListItems.filter(item=>item.is_active||item.id===component.price_list_item_id).map(item=><option key={item.id} value={item.id}>{item.name}{item.is_active?"":" · архив"}</option>)}</select></label>
             <label>Адрес<input value={component.address} onChange={e=>updateAreaComponent(component.id,{address:e.target.value})} onBlur={e=>void saveManualServiceLine(component,{address:e.target.value})}/></label>
             <label>Вид площади<input value={component.area_type} onChange={e=>updateAreaComponent(component.id,{area_type:e.target.value})} onBlur={e=>void saveManualServiceLine(component,{area_type:e.target.value})}/></label>
             <label>Вид работ<input value={component.work_type} onChange={e=>updateAreaComponent(component.id,{work_type:e.target.value})} onBlur={e=>void saveManualServiceLine(component,{work_type:e.target.value})}/></label>
             <label>Площадь, м²<input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})} onBlur={e=>void saveManualServiceLine(component,{area_m2:Number(e.target.value)})}/></label>
+            <label>Тариф, {appSettings?.currency_unit_symbol??"₽"}/м²/мес<input type="number" min="0" step="any" value={component.price_per_m2_month??""} placeholder={String(form?.service_price_per_m2_month??"")} onChange={e=>updateAreaComponent(component.id,{price_per_m2_month:e.target.value?Number(e.target.value):null})} onBlur={e=>void saveManualServiceLine(component,{price_per_m2_month:e.target.value?Number(e.target.value):null})}/></label>
             <button type="button" className="dangerButton" disabled={busy} onClick={()=>void deleteManualServiceLine(component)}>Удалить строку</button>
           </div>:<p>{component.address} · {component.area_type} · {component.work_type} · {fmt(component.area_m2,appSettings?.display_locale||"ru-RU",appSettings?.display_number_max_fraction_digits||1)} м²</p>}
         </div>)}
         <div className="manualServiceForm">
+          <label>Услуга из прайс-листа<select value={manualServiceDraft.price_list_item_id} onChange={e=>selectPriceListItem(e.target.value)}><option value="">Выберите услугу или заполните вручную</option>{priceListItems.filter(item=>item.is_active).map(item=><option key={item.id} value={item.id}>{item.name} · {fmt(item.price_per_m2_month,appSettings?.display_locale||"ru-RU",appSettings?.display_currency_max_fraction_digits||2)} {appSettings?.currency_unit_symbol??"₽"}/м²/мес</option>)}</select></label>
           <label>Адрес<input value={manualServiceDraft.address} onChange={e=>setManualServiceDraft({...manualServiceDraft,address:e.target.value})} placeholder="Адрес или название объекта"/></label>
           <label>Вид площади<input value={manualServiceDraft.area_type} onChange={e=>setManualServiceDraft({...manualServiceDraft,area_type:e.target.value})} placeholder="Помещения, территория…"/></label>
           <label>Требуемая услуга<input value={manualServiceDraft.work_type} onChange={e=>setManualServiceDraft({...manualServiceDraft,work_type:e.target.value})} placeholder="Например, уборка снега"/></label>
           <label>Площадь, м²<input type="number" min="0" step="any" value={manualServiceDraft.area_m2} onChange={e=>setManualServiceDraft({...manualServiceDraft,area_m2:e.target.value})}/></label>
+          <label>Тариф, {appSettings?.currency_unit_symbol??"₽"}/м²/мес<input type="number" min="0" step="any" value={manualServiceDraft.price_per_m2_month} onChange={e=>setManualServiceDraft({...manualServiceDraft,price_per_m2_month:e.target.value})} placeholder={String(form?.service_price_per_m2_month??"")}/></label>
+          <label>Выработка, м²/смену<input type="number" min="0" step="any" value={manualServiceDraft.productivity_m2_per_shift} onChange={e=>setManualServiceDraft({...manualServiceDraft,productivity_m2_per_shift:e.target.value})} placeholder="Можно задать позже"/></label>
           <button type="button" disabled={busy} onClick={()=>void addManualServiceLine()}>Добавить услугу в расчёт</button>
         </div>
       </div>
@@ -605,7 +678,7 @@ export default function Home(){
           {calc?.components?.length&&appSettings&&<div className="areaResults">
             <h3>Расчёт по адресам и видам работ</h3>
             <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Тариф и стоимость КП</th><th>Выработка</th><th>Режим</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
-              {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.work_type}</small>{component.origin==="manual"&&<small>Добавлено вручную</small>}</td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² {component.origin!=="manual"&&sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</td><td>{fmt(component.monthly_price||0,appSettings.display_locale,appSettings.display_currency_max_fraction_digits)} {appSettings.currency_unit_symbol}/мес.</td><td>{component.productivity_m2_per_shift} м²/смену</td><td>{component.schedule_label} {component.origin!=="manual"&&sourceArrow(component.schedule_source_document_id,component.schedule_source_location,`Открыть источник режима для адреса ${component.address}`,component.schedule_source_document_name||"Источник режима")}</td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
+              {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.work_type}</small>{component.origin==="manual"&&<small>Добавлено вручную</small>}</td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² {component.origin!=="manual"&&sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</td><td>{fmt(component.price_per_m2_month??form?.service_price_per_m2_month??0,appSettings.display_locale,appSettings.display_currency_max_fraction_digits)} {appSettings.currency_unit_symbol}/м²/мес. · {fmt(component.monthly_price||0,appSettings.display_locale,appSettings.display_currency_max_fraction_digits)} {appSettings.currency_unit_symbol}/мес.</td><td>{component.productivity_m2_per_shift} м²/смену</td><td>{component.schedule_label} {component.origin!=="manual"&&sourceArrow(component.schedule_source_document_id,component.schedule_source_location,`Открыть источник режима для адреса ${component.address}`,component.schedule_source_document_name||"Источник режима")}</td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
             </tbody></table></div>
             <p className="areaResultsTotal">Итого: {fmt(calc.total_area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² · {fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} чел.-часов/мес. · {calc.physical_staff_by_site} сотрудников</p>
           </div>}
@@ -680,20 +753,49 @@ export default function Home(){
     </section>}
 
     {active==="settings"&&<section className="panel formulaSettingsPanel">
-      <div className="sectionHead"><div><h2>Формулы расчёта</h2><p className="muted">Просматривайте и изменяйте формулы трудозатрат, себестоимости, тарифа КП и маржинальности. Новые формулы применяются при следующем пересчёте.</p></div></div>
-      <div className="formulaNotice"><b>Формула маржинальности:</b> прибыль ÷ выручка без НДС. Внутри расчёта используется доля: `0.2` означает `20%`. Разрешены числа, указанные переменные, скобки и операции `+ − * /`; произвольный код не выполняется.</div>
-      <div className="formulaList">{formulaSettings.map(item=><details className="formulaSetting" key={item.key} open={item.key==="margin"}>
-        <summary><b>{item.label}</b><code>{item.key}</code></summary>
-        <p>{item.description}</p>
-        <label>Формула<input value={item.expression} onChange={event=>setFormulaSettings(current=>current.map(formula=>formula.key===item.key?({...formula,expression:event.target.value}):formula))}/></label>
-        <small>Доступные переменные: {item.variables.join(", ")}</small>
-      </details>)}</div>
-      <div className="formulaActions">
-        <button className="primary" disabled={formulaBusy||formulaSettings.length===0} onClick={()=>void saveCalculationFormulas()}>{formulaBusy?"Сохраняю…":"Сохранить формулы"}</button>
-        <button type="button" disabled={formulaBusy||formulaSettings.length===0} onClick={()=>setFormulaSettings(current=>current.map(item=>({...item,expression:item.default_expression})))}>Восстановить исходные формулы</button>
-        <button type="button" onClick={()=>setActive(calc?"economics":"workforce")}>Перейти к пересчёту →</button>
+      <div className="settingsSwitcher" role="tablist" aria-label="Настройки компании">
+        <button type="button" role="tab" aria-selected={priceListView==="catalog"} className={priceListView==="catalog"?"selected":""} onClick={()=>setPriceListView("catalog")}>Прайс-лист услуг</button>
+        <button type="button" role="tab" aria-selected={priceListView==="formulas"} className={priceListView==="formulas"?"selected":""} onClick={()=>setPriceListView("formulas")}>Формулы расчёта</button>
       </div>
-      {calculationDirty&&calc&&<p className="warning">Формулы сохранены. Результат показывает предыдущий расчёт — запустите пересчёт на вкладке «Экономика».</p>}
+      {priceListView==="catalog"?<div className="companyPriceList">
+        <div className="sectionHead"><div><h2>Прайс-лист компании</h2><p className="muted">Добавьте типовые услуги и их тарифы. Позиции доступны при заполнении требований; архивные записи сохраняются в ранее созданных сделках.</p></div></div>
+        <div className="priceListDraft">
+          <label>Название в списке<input value={priceListDraft.name} onChange={e=>setPriceListDraft({...priceListDraft,name:e.target.value})} placeholder="Комплексная уборка помещений"/></label>
+          <label>Вид площади<input value={priceListDraft.area_type} onChange={e=>setPriceListDraft({...priceListDraft,area_type:e.target.value})} placeholder="Помещения, территория"/></label>
+          <label>Вид работ / описание для КП<input value={priceListDraft.work_type} onChange={e=>setPriceListDraft({...priceListDraft,work_type:e.target.value})} placeholder="Состав работ или услуга"/></label>
+          <label>Тариф, {appSettings?.currency_unit_symbol??"₽"}/м²/мес<input type="number" min="0" step="any" value={priceListDraft.price_per_m2_month} onChange={e=>setPriceListDraft({...priceListDraft,price_per_m2_month:e.target.value})}/></label>
+          <label>Норматив, м²/смену<input type="number" min="0" step="any" value={priceListDraft.productivity_m2_per_shift} onChange={e=>setPriceListDraft({...priceListDraft,productivity_m2_per_shift:e.target.value})} placeholder="Необязательно"/></label>
+          <label>Примечание<input value={priceListDraft.notes} onChange={e=>setPriceListDraft({...priceListDraft,notes:e.target.value})} placeholder="Условия, состав или ограничение тарифа"/></label>
+          <button className="primary" type="button" disabled={priceListBusy} onClick={()=>void createPriceListItem()}>{priceListBusy?"Сохраняю…":"Добавить в прайс-лист"}</button>
+        </div>
+        {priceListItems.length===0?<div className="empty">Прайс-лист пока пуст. Добавьте первую услугу выше.</div>:<div className="priceListRows">{priceListItems.map(item=><article className={"priceListRow "+(!item.is_active?"archived":"")} key={item.id}>
+          <div className="priceListRowHead"><b>{item.name||"Новая услуга"}</b><span>{item.is_active?"Доступна для выбора":"В архиве"}</span><button type="button" disabled={priceListBusy} onClick={()=>void archivePriceListItem(item)}>{item.is_active?"В архив":"Вернуть в прайс"}</button></div>
+          <div className="priceListFields">
+            <label>Название<input value={item.name} onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,name:e.target.value}):row))} onBlur={e=>void savePriceListItem(item.id,{name:e.target.value})}/></label>
+            <label>Вид площади<input value={item.area_type} onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,area_type:e.target.value}):row))} onBlur={e=>void savePriceListItem(item.id,{area_type:e.target.value})}/></label>
+            <label>Вид работ<input value={item.work_type} onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,work_type:e.target.value}):row))} onBlur={e=>void savePriceListItem(item.id,{work_type:e.target.value})}/></label>
+            <label>Тариф, {appSettings?.currency_unit_symbol??"₽"}/м²/мес<input type="number" min="0" step="any" value={item.price_per_m2_month} onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,price_per_m2_month:e.target.value?Number(e.target.value):0}):row))} onBlur={e=>void savePriceListItem(item.id,{price_per_m2_month:Number(e.target.value)})}/></label>
+            <label>Норматив, м²/смену<input type="number" min="0" step="any" value={item.productivity_m2_per_shift??""} placeholder="Не задан" onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,productivity_m2_per_shift:e.target.value?Number(e.target.value):null}):row))} onBlur={e=>void savePriceListItem(item.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/></label>
+            <label>Примечание<input value={item.notes??""} onChange={e=>setPriceListItems(current=>current.map(row=>row.id===item.id?({...row,notes:e.target.value||null}):row))} onBlur={e=>void savePriceListItem(item.id,{notes:e.target.value.trim()||null})}/></label>
+          </div>
+        </article>)}</div>}
+        {calculationDirty&&calc&&<p className="warning">В прайс-листе есть изменения. Текущий расчёт сохранён по прежним тарифам — пересчитайте его, чтобы обновить КП.</p>}
+      </div>:<>
+        <div className="sectionHead"><div><h2>Формулы расчёта</h2><p className="muted">Просматривайте и изменяйте формулы трудозатрат, себестоимости, тарифа КП и маржинальности. Новые формулы применяются при следующем пересчёте.</p></div></div>
+        <div className="formulaNotice"><b>Формула маржинальности:</b> прибыль ÷ выручка без НДС. Внутри расчёта используется доля: `0.2` означает `20%`. Разрешены числа, указанные переменные, скобки и операции `+ − * /`; произвольный код не выполняется.</div>
+        <div className="formulaList">{formulaSettings.map(item=><details className="formulaSetting" key={item.key} open={item.key==="margin"}>
+          <summary><b>{item.label}</b><code>{item.key}</code></summary>
+          <p>{item.description}</p>
+          <label>Формула<input value={item.expression} onChange={event=>setFormulaSettings(current=>current.map(formula=>formula.key===item.key?({...formula,expression:event.target.value}):formula))}/></label>
+          <small>Доступные переменные: {item.variables.join(", ")}</small>
+        </details>)}</div>
+        <div className="formulaActions">
+          <button className="primary" disabled={formulaBusy||formulaSettings.length===0} onClick={()=>void saveCalculationFormulas()}>{formulaBusy?"Сохраняю…":"Сохранить формулы"}</button>
+          <button type="button" disabled={formulaBusy||formulaSettings.length===0} onClick={()=>setFormulaSettings(current=>current.map(item=>({...item,expression:item.default_expression})))}>Восстановить исходные формулы</button>
+          <button type="button" onClick={()=>setActive(calc?"economics":"workforce")}>Перейти к пересчёту →</button>
+        </div>
+        {calculationDirty&&calc&&<p className="warning">Формулы сохранены. Результат показывает предыдущий расчёт — запустите пересчёт на вкладке «Экономика».</p>}
+      </>}
     </section>}
 
     {active==="pipeline"&&<section className="panel">

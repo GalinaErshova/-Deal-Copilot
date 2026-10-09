@@ -125,6 +125,7 @@ class AreaComponentCalculation(BaseModel):
     productivity_m2_per_shift: float | None = Field(default=None, gt=0)
     schedule_mode: Literal["daily", "weekly", "monthly", "on_request", "custom", "unspecified"]
     shifts_per_month: float | None = Field(default=None, gt=0)
+    price_per_m2_month: float | None = Field(default=None, gt=0)
 
 class CalculationBreakdownRequest(BaseModel):
     confirmed: bool = False
@@ -147,6 +148,8 @@ class ManualServiceLineRequest(BaseModel):
     schedule_mode: Literal["daily", "weekly", "monthly", "on_request", "custom", "unspecified"] = "unspecified"
     shifts_per_month: float | None = Field(default=None, gt=0)
     productivity_m2_per_shift: float | None = Field(default=None, gt=0)
+    price_list_item_id: int | None = Field(default=None, gt=0)
+    price_per_m2_month: float | None = Field(default=None, gt=0)
 
 class ManualServiceLineUpdate(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
@@ -157,6 +160,27 @@ class ManualServiceLineUpdate(BaseModel):
     schedule_mode: Literal["daily", "weekly", "monthly", "on_request", "custom", "unspecified"] | None = None
     shifts_per_month: float | None = Field(default=None, gt=0)
     productivity_m2_per_shift: float | None = Field(default=None, gt=0)
+    price_list_item_id: int | None = Field(default=None, gt=0)
+    price_per_m2_month: float | None = Field(default=None, gt=0)
+
+class PriceListItemCreate(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    name: str = Field(min_length=1, max_length=250)
+    area_type: str = Field(min_length=1, max_length=200)
+    work_type: str = Field(min_length=1, max_length=250)
+    price_per_m2_month: float = Field(gt=0)
+    productivity_m2_per_shift: float | None = Field(default=None, gt=0)
+    notes: str | None = Field(default=None, max_length=2000)
+
+class PriceListItemUpdate(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    name: str | None = Field(default=None, min_length=1, max_length=250)
+    area_type: str | None = Field(default=None, min_length=1, max_length=200)
+    work_type: str | None = Field(default=None, min_length=1, max_length=250)
+    price_per_m2_month: float | None = Field(default=None, gt=0)
+    productivity_m2_per_shift: float | None = Field(default=None, gt=0)
+    notes: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
 
 class CalculationFormulaItem(BaseModel):
     key: str

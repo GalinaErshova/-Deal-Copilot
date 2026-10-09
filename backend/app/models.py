@@ -84,6 +84,19 @@ class Calculation(Base):
     output_json: Mapped[str] = mapped_column(Text)
     decision: Mapped[str] = mapped_column(String(40))
 
+class PriceListItem(Base):
+    __tablename__ = "price_list_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(250))
+    area_type: Mapped[str] = mapped_column(String(200), default="Площадь объекта")
+    work_type: Mapped[str] = mapped_column(String(250))
+    price_per_m2_month: Mapped[float] = mapped_column(Float)
+    productivity_m2_per_shift: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
 class ManualServiceLine(Base):
     __tablename__ = "manual_service_lines"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -95,6 +108,8 @@ class ManualServiceLine(Base):
     schedule_mode: Mapped[str] = mapped_column(String(30), default="unspecified")
     shifts_per_month: Mapped[float | None] = mapped_column(Float, nullable=True)
     productivity_m2_per_shift: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_list_item_id: Mapped[int | None] = mapped_column(ForeignKey("price_list_items.id", ondelete="SET NULL"), nullable=True)
+    price_per_m2_month: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
 class CalculationFormula(Base):

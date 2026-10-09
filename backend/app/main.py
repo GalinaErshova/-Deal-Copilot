@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -33,6 +34,7 @@ from .models import (
     ManualServiceLine,
     PipelineRun,
     PipelineStep,
+    PriceListItem,
     ReferenceRate,
     utc_now_naive,
 )
@@ -46,6 +48,8 @@ from .schemas import (
     ManualAreaFieldRequest,
     ManualServiceLineRequest,
     ManualServiceLineUpdate,
+    PriceListItemCreate,
+    PriceListItemUpdate,
     ProposalExportRequest,
 )
 from .scope_curator import curate_scope_components
@@ -54,6 +58,22 @@ from .scope_schedule import calculate_monthly_shifts
 
 settings.ensure_dirs()
 Base.metadata.create_all(engine)
+
+# Обновляем ранее созданную SQLite-схему: create_all добавляет таблицы, но не колонки.
+def ensure_price_list_columns() -> None:
+    columns={column["name"] for column in inspect(engine).get_columns("manual_service_lines")}
+    with engine.begin() as connection:
+        if "price_list_item_id" not in columns:
+            connection.execute(text(
+                'ALTER TABLE "manual_service_lines" ADD COLUMN "price_list_item_id" '
+                'INTEGER REFERENCES "price_list_items" (id) ON DELETE SET NULL'
+            ))
+        if "price_per_m2_month" not in columns:
+            connection.execute(text(
+                'ALTER TABLE "manual_service_lines" ADD COLUMN "price_per_m2_month" FLOAT'
+            ))
+
+ensure_price_list_columns()
 
 app = FastAPI(title="Deal Copilot API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.parsed_cors_origins, allow_credentials=True,
@@ -437,13 +457,21 @@ def area_components(deal_id:int, db:Session=Depends(get_db)):
     components=extract_area_components(docs)
     components=curate_scope_components(docs,components)
     rates=db.query(ReferenceRate).filter(ReferenceRate.category=="productivity").all()
+    price_items=db.query(PriceListItem).filter(PriceListItem.is_active.is_(True)).all()
+    price_by_work_type={" ".join(item.work_type.casefold().split()):item for item in price_items}
     for component in components:
         rate=_productivity_reference(component,rates)
+        price_item=price_by_work_type.get(" ".join(str(component.get("work_type") or "").casefold().split()))
         component["productivity_m2_per_shift"]=rate.value if rate else None
         component["productivity_reference"]=(
             {"id":rate.id,"name":rate.name,"unit":rate.unit,"value":rate.value,"notes":rate.notes}
             if rate else None
         )
+        if price_item:
+            component["price_list_item_id"]=price_item.id
+            component["price_per_m2_month"]=price_item.price_per_m2_month
+            if not rate and price_item.productivity_m2_per_shift:
+                component["productivity_m2_per_shift"]=price_item.productivity_m2_per_shift
         component["shifts_per_month"]=calculate_monthly_shifts(
             str(component.get("schedule_mode") or "unspecified"),
             working_days_per_month=settings.working_days_per_month,
@@ -456,6 +484,7 @@ def area_components(deal_id:int, db:Session=Depends(get_db)):
             "id":f"manual:{line.id}","origin":"manual","manual_line_id":line.id,
             "address":line.address,"area_type":line.area_type,"work_type":line.work_type,
             "work_type_source_document_id":None,"work_type_source_location":"","work_type_source_fragment":"",
+            "price_list_item_id":line.price_list_item_id,"price_per_m2_month":line.price_per_m2_month,
             "area_m2":line.area_m2,"source_document_id":None,"source_document_name":"",
             "source_location":"","source_fragment":"","schedule_mode":line.schedule_mode,
             "schedule_label":{"daily":"Каждый рабочий день","weekly":"Еженедельно","monthly":"Ежемесячно",
@@ -483,7 +512,14 @@ def area_components(deal_id:int, db:Session=Depends(get_db)):
 @app.post("/api/deals/{deal_id}/area-components/manual")
 def create_manual_service_line(deal_id:int,payload:ManualServiceLineRequest,db:Session=Depends(get_db)):
     if not db.get(Deal,deal_id): raise HTTPException(404,"Deal not found")
-    line=ManualServiceLine(deal_id=deal_id,**payload.model_dump())
+    values=payload.model_dump()
+    price_item=db.get(PriceListItem,values["price_list_item_id"]) if values["price_list_item_id"] else None
+    if values["price_list_item_id"] and (not price_item or not price_item.is_active):
+        raise HTTPException(422,"Выберите активную позицию из прайс-листа")
+    if price_item:
+        values["price_per_m2_month"]=values["price_per_m2_month"] or price_item.price_per_m2_month
+        values["productivity_m2_per_shift"]=values["productivity_m2_per_shift"] or price_item.productivity_m2_per_shift
+    line=ManualServiceLine(deal_id=deal_id,**values)
     db.add(line);db.commit();db.refresh(line)
     return {"id":line.id,"component_id":f"manual:{line.id}","origin":"manual"}
 
@@ -491,7 +527,14 @@ def create_manual_service_line(deal_id:int,payload:ManualServiceLineRequest,db:S
 def update_manual_service_line(deal_id:int,line_id:int,payload:ManualServiceLineUpdate,db:Session=Depends(get_db)):
     line=db.query(ManualServiceLine).filter(ManualServiceLine.id==line_id,ManualServiceLine.deal_id==deal_id).first()
     if not line: raise HTTPException(404,"Ручная строка услуг не найдена")
-    for key,value in payload.model_dump(exclude_unset=True).items(): setattr(line,key,value)
+    updates=payload.model_dump(exclude_unset=True)
+    if updates.get("price_list_item_id"):
+        price_item=db.get(PriceListItem,updates["price_list_item_id"])
+        if not price_item or not price_item.is_active:
+            raise HTTPException(422,"Выберите активную позицию из прайс-листа")
+        updates.setdefault("price_per_m2_month",price_item.price_per_m2_month)
+        updates.setdefault("productivity_m2_per_shift",price_item.productivity_m2_per_shift)
+    for key,value in updates.items(): setattr(line,key,value)
     db.commit()
     return {"id":line.id,"component_id":f"manual:{line.id}","origin":"manual"}
 
@@ -537,6 +580,38 @@ def pipeline(deal_id:int,db:Session=Depends(get_db)):
 def reference_rates(db:Session=Depends(get_db)):
     return [{"id":r.id,"category":r.category,"name":r.name,"unit":r.unit,"value":r.value,"notes":r.notes}
             for r in db.query(ReferenceRate).all()]
+
+def _price_list_payload(item:PriceListItem)->dict:
+    return {"id":item.id,"name":item.name,"area_type":item.area_type,"work_type":item.work_type,
+            "price_per_m2_month":item.price_per_m2_month,
+            "productivity_m2_per_shift":item.productivity_m2_per_shift,
+            "notes":item.notes,"is_active":item.is_active}
+
+@app.get("/api/price-list")
+def company_price_list(db:Session=Depends(get_db)):
+    return [_price_list_payload(item) for item in db.query(PriceListItem).order_by(PriceListItem.name,PriceListItem.id).all()]
+
+@app.post("/api/price-list")
+def create_price_list_item(payload:PriceListItemCreate,db:Session=Depends(get_db)):
+    item=PriceListItem(**payload.model_dump())
+    db.add(item);db.commit();db.refresh(item)
+    return _price_list_payload(item)
+
+@app.patch("/api/price-list/{item_id}")
+def update_price_list_item(item_id:int,payload:PriceListItemUpdate,db:Session=Depends(get_db)):
+    item=db.get(PriceListItem,item_id)
+    if not item: raise HTTPException(404,"Позиция прайс-листа не найдена")
+    for key,value in payload.model_dump(exclude_unset=True).items(): setattr(item,key,value)
+    db.commit();db.refresh(item)
+    return _price_list_payload(item)
+
+@app.delete("/api/price-list/{item_id}")
+def archive_price_list_item(item_id:int,db:Session=Depends(get_db)):
+    item=db.get(PriceListItem,item_id)
+    if not item: raise HTTPException(404,"Позиция прайс-листа не найдена")
+    item.is_active=False
+    db.commit()
+    return {"ok":True,"is_active":False}
 
 @app.post("/api/deals/{deal_id}/calculate")
 def calculate_deal(deal_id:int,req:CalculationRequest,db:Session=Depends(get_db)):
@@ -587,6 +662,7 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
     manual_components=[{
         "id":f"manual:{line.id}","origin":"manual","manual_line_id":line.id,
         "address":line.address,"area_type":line.area_type,"work_type":line.work_type,
+        "price_list_item_id":line.price_list_item_id,"price_per_m2_month":line.price_per_m2_month,
         "source_document_id":None,"source_document_name":"","source_location":"","source_fragment":"",
         "schedule_source_document_id":None,"schedule_source_document_name":None,
         "schedule_source_location":"","schedule_source_fragment":"",
@@ -624,6 +700,12 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         shifts_by_id[source["id"]]=shifts
 
     total_area=sum(items_by_id[component["id"]].area_m2 for component in source_components)
+    price_by_id={}
+    for source in source_components:
+        component_id=source["id"]
+        item=items_by_id[component_id]
+        price_by_id[component_id]=(item.price_per_m2_month or source.get("price_per_m2_month")
+                                   or req.assumptions.service_price_per_m2_month)
     total_workload=sum(
         items_by_id[component["id"]].area_m2
         / items_by_id[component["id"]].productivity_m2_per_shift
@@ -657,7 +739,7 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         fte=labor_hours/req.assumptions.monthly_hours_per_fte
         line_monthly_price=evaluate_formula(
             formula_expressions["line_monthly_price"],FORMULA_BY_KEY["line_monthly_price"].variables,
-            {"area_m2":item.area_m2,"service_price_per_m2_month":req.assumptions.service_price_per_m2_month},
+            {"area_m2":item.area_m2,"service_price_per_m2_month":price_by_id[source["id"]]},
         )
         line_contract_price=evaluate_formula(
             formula_expressions["contract_total_price"],FORMULA_BY_KEY["contract_total_price"].variables,
@@ -667,6 +749,7 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
             **source,
             "area_m2":item.area_m2,
             "productivity_m2_per_shift":item.productivity_m2_per_shift,
+            "price_per_m2_month":price_by_id[source["id"]],
             "schedule_mode":item.schedule_mode,
             "shifts_per_month":shifts,
             "productivity_reference":({"id":rate.id,"name":rate.name,"unit":rate.unit,"notes":rate.notes} if rate else None),
@@ -678,9 +761,11 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         })
 
     effective_productivity=total_area*settings.working_days_per_month/total_workload
+    effective_price=sum(items_by_id[key].area_m2*price for key,price in price_by_id.items())/total_area
     calculation_request=req.assumptions.model_copy(update={
         "area_m2":total_area,
         "productivity_m2_per_shift":effective_productivity,
+        "service_price_per_m2_month":effective_price,
     })
     try:
         aggregate=calculate(calculation_request,settings,formula_expressions)
@@ -767,13 +852,14 @@ def export_proposal(deal_id:int,req:ProposalExportRequest,db:Session=Depends(get
         for item in components:
             row=table.add_row().cells
             area=float(item.get("area_m2",0) or 0)
+            item_price=float(item.get("price_per_m2_month") or price_per_m2)
             monthly_value=float(item.get("monthly_price") or evaluate_formula(
                 formula_expressions["line_monthly_price"],FORMULA_BY_KEY["line_monthly_price"].variables,
-                {"area_m2":area,"service_price_per_m2_month":price_per_m2}))
+                {"area_m2":area,"service_price_per_m2_month":item_price}))
             contract_value=float(item.get("contract_price") or evaluate_formula(
                 formula_expressions["contract_total_price"],FORMULA_BY_KEY["contract_total_price"].variables,
                 {"monthly_price":monthly_value,"contract_months":contract_months}))
-            rate=f"{price_per_m2:,.2f}".replace(","," ").replace(".",",")
+            rate=f"{item_price:,.2f}".replace(","," ").replace(".",",")
             monthly=f"{monthly_value:,.2f}".replace(","," ").replace(".",",")
             line_contract=f"{contract_value:,.2f}".replace(","," ").replace(".",",")
             for cell,value in zip(row,[item.get("address","[уточнить]"),item.get("work_type","[уточнить]"),
