@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -95,6 +95,18 @@ class PriceListItem(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+class DealComponentPriceSelection(Base):
+    __tablename__ = "deal_component_price_selections"
+    __table_args__ = (UniqueConstraint("deal_id", "component_id", name="uq_deal_component_price_selection"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), index=True)
+    component_id: Mapped[str] = mapped_column(String(500))
+    # Null explicitly means the company chose to price this line manually.
+    price_list_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("price_list_items.id", ondelete="SET NULL"), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
 class ManualServiceLine(Base):

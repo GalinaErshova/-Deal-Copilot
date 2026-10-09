@@ -28,6 +28,7 @@ from .model_gateway import gateway
 from .models import (
     Calculation,
     CalculationFormula,
+    DealComponentPriceSelection,
     Deal,
     Document,
     ExtractedField,
@@ -44,6 +45,7 @@ from .schemas import (
     CalculationBreakdownRequest,
     CalculationFormulaUpdate,
     CalculationRequest,
+    DealComponentPriceSelectionUpdate,
     DealExtraction,
     ManualAreaFieldRequest,
     ManualServiceLineRequest,
@@ -278,7 +280,7 @@ def health():
     return {"status":"ok","model":settings.llm_default_model,"demo_mode":settings.is_demo_mode}
 
 @app.post("/api/deals")
-def create_deal(title: str = "Демо-тендер", db: Session = Depends(get_db)):
+def create_deal(title: str = "Новая сделка", db: Session = Depends(get_db)):
     deal = Deal(title=title)
     db.add(deal); db.commit(); db.refresh(deal)
     return {"id":deal.id,"title":deal.title,"status":deal.status}
@@ -468,10 +470,20 @@ def area_components(deal_id:int, db:Session=Depends(get_db)):
     rates=db.query(ReferenceRate).filter(ReferenceRate.category=="productivity").all()
     price_items=db.query(PriceListItem).filter(PriceListItem.is_active.is_(True)).all()
     price_by_work_type={" ".join(item.work_type.casefold().split()):item for item in price_items}
+    saved_price_selections={selection.component_id:selection for selection in db.query(DealComponentPriceSelection).filter(
+        DealComponentPriceSelection.deal_id==deal_id
+    ).all()}
     for component in components:
         rate=_productivity_reference(component,rates)
-        price_item=price_by_work_type.get(" ".join(str(component.get("work_type") or "").casefold().split()))
-        component["productivity_m2_per_shift"]=rate.value if rate else None
+        saved_selection=saved_price_selections.get(component["id"])
+        if saved_selection:
+            price_item=db.get(PriceListItem,saved_selection.price_list_item_id) if saved_selection.price_list_item_id else None
+        else:
+            price_item=price_by_work_type.get(" ".join(str(component.get("work_type") or "").casefold().split()))
+        component["productivity_m2_per_shift"]=(
+            price_item.productivity_m2_per_shift if price_item and price_item.productivity_m2_per_shift
+            else rate.value if rate else None
+        )
         component["productivity_reference"]=(
             {"id":rate.id,"name":rate.name,"unit":rate.unit,"value":rate.value,"notes":rate.notes}
             if rate else None
@@ -479,8 +491,10 @@ def area_components(deal_id:int, db:Session=Depends(get_db)):
         if price_item:
             component["price_list_item_id"]=price_item.id
             component["price_per_m2_month"]=price_item.price_per_m2_month
-            if not rate and price_item.productivity_m2_per_shift:
-                component["productivity_m2_per_shift"]=price_item.productivity_m2_per_shift
+            component["company_service_name"]=price_item.name
+        elif saved_selection:
+            component["price_list_item_id"]=None
+            component["price_per_m2_month"]=None
         component["shifts_per_month"]=calculate_monthly_shifts(
             str(component.get("schedule_mode") or "unspecified"),
             working_days_per_month=settings.working_days_per_month,
@@ -517,6 +531,32 @@ def area_components(deal_id:int, db:Session=Depends(get_db)):
         )
         components.append(component)
     return components
+
+@app.put("/api/deals/{deal_id}/component-price-selection")
+def save_component_price_selection(
+    deal_id:int,payload:DealComponentPriceSelectionUpdate,db:Session=Depends(get_db)
+):
+    if not db.get(Deal,deal_id): raise HTTPException(404,"Сделка не найдена")
+    documents=db.query(Document).filter(Document.deal_id==deal_id).order_by(Document.id).all()
+    document_components=extract_area_components(documents)
+    if not any(component["id"]==payload.component_id for component in document_components):
+        raise HTTPException(404,"Строка требований не найдена в документах сделки")
+    if payload.price_list_item_id is not None:
+        item=db.get(PriceListItem,payload.price_list_item_id)
+        if not item or not item.is_active: raise HTTPException(404,"Активная услуга в прайс-листе не найдена")
+    selection=db.query(DealComponentPriceSelection).filter_by(
+        deal_id=deal_id,component_id=payload.component_id
+    ).first()
+    if selection:
+        selection.price_list_item_id=payload.price_list_item_id
+    else:
+        selection=DealComponentPriceSelection(
+            deal_id=deal_id,component_id=payload.component_id,
+            price_list_item_id=payload.price_list_item_id,
+        )
+        db.add(selection)
+    db.commit()
+    return {"component_id":selection.component_id,"price_list_item_id":selection.price_list_item_id}
 
 @app.post("/api/deals/{deal_id}/area-components/manual")
 def create_manual_service_line(deal_id:int,payload:ManualServiceLineRequest,db:Session=Depends(get_db)):
@@ -686,6 +726,21 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         "schedule_source_location":"","schedule_source_fragment":"",
     } for line in manual_rows]
     source_components=document_components+manual_components
+    saved_selections={selection.component_id:selection for selection in db.query(DealComponentPriceSelection).filter(
+        DealComponentPriceSelection.deal_id==deal_id
+    ).all()}
+    active_price_items={item.id:item for item in db.query(PriceListItem).filter(PriceListItem.is_active.is_(True)).all()}
+    price_by_work_type={" ".join(item.work_type.casefold().split()):item for item in active_price_items.values()}
+    for source in source_components:
+        selection=saved_selections.get(source["id"])
+        selected_id=selection.price_list_item_id if selection else source.get("price_list_item_id")
+        catalog_item=active_price_items.get(selected_id) if selected_id else None
+        if not selection and not selected_id:
+            catalog_item=price_by_work_type.get(" ".join(str(source.get("work_type") or "").casefold().split()))
+        if catalog_item:
+            source["price_list_item_id"]=catalog_item.id
+            source["price_per_m2_month"]=catalog_item.price_per_m2_month
+            source["company_service_name"]=catalog_item.name
     source_by_id={component["id"]:component for component in source_components}
     requested_ids={component.id for component in req.components}
     if not source_by_id:
@@ -880,7 +935,7 @@ def export_proposal(deal_id:int,req:ProposalExportRequest,db:Session=Depends(get
             rate=f"{item_price:,.2f}".replace(","," ").replace(".",",")
             monthly=f"{monthly_value:,.2f}".replace(","," ").replace(".",",")
             line_contract=f"{contract_value:,.2f}".replace(","," ").replace(".",",")
-            for cell,value in zip(row,[item.get("address","[уточнить]"),item.get("work_type","[уточнить]"),
+            for cell,value in zip(row,[item.get("address","[уточнить]"),item.get("company_service_name") or item.get("work_type","[уточнить]"),
                 str(item.get("area_m2","—")),item.get("schedule_label",item.get("schedule_mode","[уточнить]")),rate,monthly,line_contract]):
                 cell.text=str(value)
 

@@ -187,6 +187,9 @@ details summary { cursor: pointer; }
 .manualServiceRow p { margin: 7px 0 0; color: #b6cad9; }
 .manualServiceFields, .manualServiceForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
 .manualServiceFields { margin-top: 10px; }
+.documentServiceFields { display: grid; gap: 9px; margin-top: 8px; }
+.documentServiceFields label { display: grid; max-width: 520px; gap: 5px; color: #acc1d1; font-size: 12px; }
+.documentServiceFields select { min-width: 0; width: 100%; padding: 9px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
 .manualServiceFields label, .manualServiceForm label, .formulaSetting label { display: grid; min-width: 0; gap: 5px; color: #acc1d1; font-size: 12px; }
 .manualServiceFields input, .manualServiceFields select, .manualServiceForm input, .manualServiceForm select, .formulaSetting input { min-width: 0; width: 100%; padding: 9px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
 .manualServiceForm button { align-self: end; }

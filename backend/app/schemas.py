@@ -182,6 +182,10 @@ class PriceListItemUpdate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     is_active: bool | None = None
 
+class DealComponentPriceSelectionUpdate(BaseModel):
+    component_id: str = Field(min_length=1, max_length=500)
+    price_list_item_id: int | None = Field(default=None, gt=0)
+
 class CalculationFormulaItem(BaseModel):
     key: str
     expression: str = Field(min_length=1, max_length=240)
