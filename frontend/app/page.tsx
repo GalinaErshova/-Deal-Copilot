@@ -18,6 +18,8 @@ type ScheduleMode="daily"|"weekly"|"monthly"|"on_request"|"custom"|"unspecified"
 type AreaComponent={id:string;origin?:"document"|"manual";manual_line_id?:number;price_list_item_id?:number|null;price_per_m2_month?:number|null;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number|null;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;monthly_price?:number;contract_price?:number;labor_hours_month?:number;fte?:number;physical_staff?:number};
 type FormulaSetting={key:string;label:string;description:string;expression:string;default_expression:string;variables:string[]};
 type PriceListItem={id:number;name:string;area_type:string;work_type:string;price_per_m2_month:number;productivity_m2_per_shift:number|null;notes:string|null;is_active:boolean};
+type DemoProviderTariff={id:string;provider:string;city:string;object_type:string;service:string;area_range:string|null;price_min:number|null;price_max:number|null;price_unit:string;source_url:string;source_date:string;source_dataset:string;evidence:string;details:string|null};
+type DemoProviderTariffs={notice:string;items:DemoProviderTariff[]};
 type PriceListDraft={name:string;area_type:string;work_type:string;price_per_m2_month:string;productivity_m2_per_shift:string;notes:string};
 type ManualServiceDraft={address:string;area_type:string;work_type:string;area_m2:string;price_list_item_id:string;price_per_m2_month:string;productivity_m2_per_shift:string};
 type Calc={calculation_id:number;area_m2?:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
@@ -109,7 +111,9 @@ export default function Home(){
   const [formulaSettings,setFormulaSettings]=useState<FormulaSetting[]>([]);
   const [formulaBusy,setFormulaBusy]=useState(false);
   const [priceListItems,setPriceListItems]=useState<PriceListItem[]>([]);
-  const [priceListView,setPriceListView]=useState<"catalog"|"formulas">("catalog");
+  const [priceListView,setPriceListView]=useState<"catalog"|"demo"|"formulas">("catalog");
+  const [demoProviderTariffs,setDemoProviderTariffs]=useState<DemoProviderTariffs|null>(null);
+  const [demoTariffQuery,setDemoTariffQuery]=useState("");
   const [priceListDraft,setPriceListDraft]=useState<PriceListDraft>({name:"",area_type:"Площадь объекта",work_type:"",price_per_m2_month:"",productivity_m2_per_shift:"",notes:""});
   const [priceListBusy,setPriceListBusy]=useState(false);
   const [manualServiceDraft,setManualServiceDraft]=useState<ManualServiceDraft>({address:"",area_type:"Площадь объекта",work_type:"",area_m2:"",price_list_item_id:"",price_per_m2_month:"",productivity_m2_per_shift:""});
@@ -176,6 +180,7 @@ export default function Home(){
   },[]);
   useEffect(()=>{req("/formulas").then(setFormulaSettings).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{req("/price-list").then(setPriceListItems).catch((e:any)=>setError(e.message))},[]);
+  useEffect(()=>{req("/demo-provider-tariffs").then(setDemoProviderTariffs).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
   useEffect(()=>{
     const profileFields=["customer_name","customer_address","customer_inn","customer_kpp","customer_ogrn","customer_contact_person","customer_phone","customer_email"] as const;
@@ -755,6 +760,7 @@ export default function Home(){
     {active==="settings"&&<section className="panel formulaSettingsPanel">
       <div className="settingsSwitcher" role="tablist" aria-label="Настройки компании">
         <button type="button" role="tab" aria-selected={priceListView==="catalog"} className={priceListView==="catalog"?"selected":""} onClick={()=>setPriceListView("catalog")}>Прайс-лист услуг</button>
+        <button type="button" role="tab" aria-selected={priceListView==="demo"} className={priceListView==="demo"?"selected":""} onClick={()=>setPriceListView("demo")}>Тарифы исполнителей · демо</button>
         <button type="button" role="tab" aria-selected={priceListView==="formulas"} className={priceListView==="formulas"?"selected":""} onClick={()=>setPriceListView("formulas")}>Формулы расчёта</button>
       </div>
       {priceListView==="catalog"?<div className="companyPriceList">
@@ -780,6 +786,23 @@ export default function Home(){
           </div>
         </article>)}</div>}
         {calculationDirty&&calc&&<p className="warning">В прайс-листе есть изменения. Текущий расчёт сохранён по прежним тарифам — пересчитайте его, чтобы обновить КП.</p>}
+      </div>:priceListView==="demo"?<div className="companyPriceList">
+        <div className="sectionHead"><div><h2>Справочник тарифов исполнителей</h2><p className="muted">Цены из демонстрационных прайс-листов для сравнения предложений и тестовых сценариев.</p></div></div>
+        <div className="demoTariffNotice"><b>Справочные демо-данные.</b> Это не прайс вашей компании. Период и условия указаны только там, где они явно присутствуют в источнике. Перед использованием проверьте актуальную цену у исполнителя. Ставки не подставляются в расчёт КП автоматически.</div>
+        <label className="demoTariffSearch">Поиск по исполнителю, объекту или услуге<input value={demoTariffQuery} onChange={event=>setDemoTariffQuery(event.target.value)} placeholder="Например, офис или генеральная уборка"/></label>
+        {demoProviderTariffs&&[...new Set(demoProviderTariffs.items.map(item=>item.provider))].map(provider=>{
+          const query=demoTariffQuery.trim().toLocaleLowerCase("ru-RU");
+          const entries=demoProviderTariffs.items.filter(item=>item.provider===provider&&(!query||[item.provider,item.city,item.object_type,item.service,item.area_range||""].join(" ").toLocaleLowerCase("ru-RU").includes(query)));
+          if(!entries.length)return null;
+          return <details className="demoTariffProvider" key={provider}>
+            <summary><b>{provider}</b><span>{entries[0].city} · {entries.length} тарифов</span></summary>
+            <div className="demoTariffRows">{entries.map(item=><article className="demoTariffRow" key={item.id}>
+              <div><b>{item.object_type}</b><span>{item.service}</span></div>
+              <div>{item.area_range&&<small>Площадь: {item.area_range} м²</small>}<strong>{item.price_min===null?"Договорная":item.price_max===null?`от ${fmt(item.price_min,"ru-RU",2)}`:`${fmt(item.price_min,"ru-RU",2)}–${fmt(item.price_max,"ru-RU",2)}`} {item.price_unit}</strong></div>
+              <div className="demoTariffSource"><small>{item.details&&`${item.details} `}{item.evidence} Набор данных: {item.source_dataset}. Дата извлечения: {item.source_date}.</small><a href={item.source_url} target="_blank" rel="noreferrer">Открыть источник ↗</a></div>
+            </article>)}</div>
+          </details>;
+        })}
       </div>:<>
         <div className="sectionHead"><div><h2>Формулы расчёта</h2><p className="muted">Просматривайте и изменяйте формулы трудозатрат, себестоимости, тарифа КП и маржинальности. Новые формулы применяются при следующем пересчёте.</p></div></div>
         <div className="formulaNotice"><b>Формула маржинальности:</b> прибыль ÷ выручка без НДС. Внутри расчёта используется доля: `0.2` означает `20%`. Разрешены числа, указанные переменные, скобки и операции `+ − * /`; произвольный код не выполняется.</div>

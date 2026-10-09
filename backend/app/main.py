@@ -591,6 +591,15 @@ def _price_list_payload(item:PriceListItem)->dict:
 def company_price_list(db:Session=Depends(get_db)):
     return [_price_list_payload(item) for item in db.query(PriceListItem).order_by(PriceListItem.name,PriceListItem.id).all()]
 
+@app.get("/api/demo-provider-tariffs")
+def demo_provider_tariffs():
+    """Справочные демо-тарифы исполнителей с исходными единицами и ссылками."""
+    path=Path(__file__).resolve().parents[2]/"data"/"demo"/"provider-price-rates.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise HTTPException(404,"Демо-каталог тарифов не найден") from exc
+
 @app.post("/api/price-list")
 def create_price_list_item(payload:PriceListItemCreate,db:Session=Depends(get_db)):
     item=PriceListItem(**payload.model_dump())
