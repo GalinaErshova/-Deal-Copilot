@@ -110,6 +110,20 @@ button.dealHistoryItem.selected { color: var(--text); background: #112a3f; borde
 .workspaceHeader h1 { margin: 0; font-size: clamp(26px, 3vw, 38px); font-weight: 760; letter-spacing: -.045em; line-height: 1.12; }
 .workspaceHeader > div > p:last-child { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .workspaceStep { display: flex; align-items: baseline; gap: 7px; padding: 10px 12px; color: #7d94a7; background: #0c1b2a; border: 1px solid var(--line); border-radius: 10px; white-space: nowrap; }
+.headerDealList.active { color: var(--text); border-color: var(--green); }
+.dealManagerToolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.dealManagerToolbar label, .dealManagerName { display: grid; min-width: 0; gap: 5px; color: #acc1d1; font-size: 11px; }
+.dealManagerToolbar label { width: min(100%, 440px); }
+.dealManagerToolbar input, .dealManagerName input { min-width: 0; width: 100%; padding: 9px 10px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
+.dealManagerToolbar > span { color: #8298aa; font-size: 11px; white-space: nowrap; }
+.dealManagerList { display: grid; max-height: 68vh; gap: 9px; overflow-y: auto; padding-right: 3px; }
+.dealManagerRow { display: grid; grid-template-columns: minmax(160px,1fr) minmax(180px,1.1fr) auto; align-items: end; gap: 12px; padding: 13px; background: #0a1826; border: 1px solid #19334c; border-radius: 9px; }
+.dealManagerRow.current { border-color: var(--green); }
+.dealManagerInfo { display: grid; min-width: 0; gap: 5px; align-self: center; }
+.dealManagerInfo b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dealManagerInfo small { color: #8298aa; font-size: 10px; line-height: 1.45; }
+.dealManagerActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.dealManagerActions button { padding: 8px 10px; font-size: 11px; }
 .workspaceStep span:first-child { margin-right: 3px; font-size: 9px; font-weight: 800; letter-spacing: .13em; }
 .workspaceStep b { color: var(--green); font-size: 15px; font-variant-numeric: tabular-nums; }
 .workspaceStep i { color: #49647a; font-style: normal; }
@@ -372,6 +386,8 @@ details summary { cursor: pointer; }
   .sidebar { width: 254px; padding-right: 14px; padding-left: 14px; }
   .workspace { margin-left: 254px; padding-right: 27px; padding-left: 27px; }
   .economicsGrid { grid-template-columns: minmax(230px, 310px) minmax(0, 1fr); gap: 14px; }
+  .dealManagerRow { grid-template-columns: minmax(130px,1fr) minmax(160px,1fr); }
+  .dealManagerActions { grid-column: 1 / -1; }
 }
 
 @media (max-width: 760px) {
@@ -397,6 +413,12 @@ details summary { cursor: pointer; }
   .workspaceHeader { align-items: flex-start; margin-bottom: 18px; }
   .workspaceStep { padding: 8px; }
   .workspaceHeader > div > p:last-child { font-size: 12px; }
+  .workspaceHeaderActions { flex-wrap: wrap; justify-content: flex-end; }
+  .headerDealList { padding: 8px 9px; font-size: 11px; }
+  .dealManagerToolbar { align-items: stretch; flex-direction: column; }
+  .dealManagerToolbar label { width: 100%; }
+  .dealManagerRow { grid-template-columns: minmax(0,1fr); align-items: stretch; }
+  .dealManagerActions { grid-column: auto; justify-content: flex-start; }
   .panel.two, .split, .economicsGrid { grid-template-columns: minmax(0, 1fr); }
   .areaLineInputs { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .proposalForm { grid-template-columns: 1fr; }
@@ -459,6 +481,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dealHistorySearch { color: #202722; background: #fff; border-color: var(--line); }
 .dealHistorySearch::placeholder { color: #737a76; }
 .dealStatus, .sideNav button, .serviceNav button small { color: #454847; }
+.dealManagerToolbar label, .dealManagerName { color: #454847; }
+.dealManagerToolbar input, .dealManagerName input { color: #202722; background: #fff; border-color: var(--line); }
+.dealManagerToolbar > span, .dealManagerInfo small { color: #737a76; }
+.dealManagerRow { background: #f8faf8; border-color: var(--line); }
+.dealManagerRow.current { border-color: #3c6d5c; }
+.dealManagerActions .dangerButton { color: #ab2d23; border-color: #e2aaa3; }
 .sideNav button:hover { color: var(--text); background: #eeefee; }
 .dealHistoryItem:hover { color: #202722; background: #f0f4f1; }
 button.dealHistoryItem.selected { color: #16352b; background: #e5eee9; border-color: #b2cbbd; box-shadow: inset 2px 0 #3c6d5c; }

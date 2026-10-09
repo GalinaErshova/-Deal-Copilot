@@ -48,6 +48,7 @@ from .schemas import (
     CalculationRequest,
     DealComponentPriceSelectionUpdate,
     DealExtraction,
+    DealUpdate,
     ManualAreaFieldRequest,
     ManualServiceLineRequest,
     ManualServiceLineUpdate,
@@ -341,6 +342,50 @@ def list_deals(db: Session = Depends(get_db)):
         }
         for deal in deals
     ]
+
+@app.patch("/api/deals/{deal_id}")
+def update_deal(deal_id: int, payload: DealUpdate, db: Session = Depends(get_db)):
+    deal = db.get(Deal, deal_id)
+    if not deal:
+        raise HTTPException(404, "Сделка не найдена")
+    deal.title = payload.title
+    db.commit()
+    db.refresh(deal)
+    return {"id": deal.id, "title": deal.title, "status": deal.status}
+
+@app.delete("/api/deals/{deal_id}")
+def delete_deal(deal_id: int, db: Session = Depends(get_db)):
+    deal = db.get(Deal, deal_id)
+    if not deal:
+        raise HTTPException(404, "Сделка не найдена")
+
+    documents = db.query(Document).filter(Document.deal_id == deal_id).all()
+    upload_root = settings.resolve_path(settings.upload_dir).resolve()
+    stored_files = []
+    for document in documents:
+        path = settings.resolve_path(document.file_path).resolve()
+        if upload_root in path.parents:
+            stored_files.append(path)
+
+    run_ids = [row[0] for row in db.query(PipelineRun.id).filter(PipelineRun.deal_id == deal_id).all()]
+    if run_ids:
+        db.query(PipelineStep).filter(PipelineStep.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(ExtractedField).filter(ExtractedField.deal_id == deal_id).delete(synchronize_session=False)
+    db.query(Calculation).filter(Calculation.deal_id == deal_id).delete(synchronize_session=False)
+    db.query(ManualServiceLine).filter(ManualServiceLine.deal_id == deal_id).delete(synchronize_session=False)
+    db.query(DealComponentPriceSelection).filter(DealComponentPriceSelection.deal_id == deal_id).delete(synchronize_session=False)
+    if run_ids:
+        db.query(PipelineRun).filter(PipelineRun.id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(Document).filter(Document.deal_id == deal_id).delete(synchronize_session=False)
+    db.delete(deal)
+    db.commit()
+
+    for path in stored_files:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return {"id": deal_id, "deleted": True}
 
 @app.post("/api/deals/{deal_id}/documents")
 async def upload_documents(deal_id: int, files: list[UploadFile] = File(...), db: Session = Depends(get_db)):

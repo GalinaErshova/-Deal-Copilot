@@ -102,6 +102,7 @@ export default function Home(){
   const [deal,setDeal]=useState<Deal|null>(null);
   const [deals,setDeals]=useState<Deal[]>([]);
   const [dealSearch,setDealSearch]=useState("");
+  const [dealNameDrafts,setDealNameDrafts]=useState<Record<number,string>>({});
   const [appSettings,setAppSettings]=useState<AppSettings|null>(null);
   const [docs,setDocs]=useState<Doc[]>([]);
   const [fields,setFields]=useState<Field[]>([]);
@@ -200,7 +201,7 @@ export default function Home(){
   useEffect(()=>{req("/formulas").then(setFormulaSettings).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{req("/price-list").then(setPriceListItems).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{req("/demo-provider-tariffs").then(setDemoProviderTariffs).catch((e:any)=>setError(e.message))},[]);
-  useEffect(()=>{if(deal)refresh(true).catch(()=>{})},[deal?.id]);
+  useEffect(()=>{if(deal)refresh(true).catch((e:any)=>setError(e.message))},[deal?.id]);
   useEffect(()=>{
     const profileFields=["customer_name","customer_address","customer_inn","customer_kpp","customer_ogrn","customer_contact_person","customer_phone","customer_email"] as const;
     setProposalForm(current=>{
@@ -242,8 +243,8 @@ export default function Home(){
       setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setForm(appSettings?.calculation_defaults??null);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("upload");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
-  function returnToDeal(selected:Deal){
-    if(busy||selected.id===deal?.id)return;
+  function returnToDeal(selected:Deal,force=false){
+    if((busy&&!force)||selected.id===deal?.id)return;
     window.localStorage.setItem("dealCopilot.activeDealId",String(selected.id));
     setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setSelectedDoc(null);setParsed(null);setHighlightPath(null);
     setOrganizationProfile({});setProposalTouched(new Set());
@@ -251,6 +252,35 @@ export default function Home(){
     setForm(appSettings?.calculation_defaults??null);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setProcessProgress(null);setDocumentsCollapsed(false);
     setActive(dealStartStage(selected));
     setDeal(selected);
+  }
+  async function saveDealTitle(item:Deal){
+    const title=(dealNameDrafts[item.id]??item.title).trim();
+    if(!title){setError("Введите название сделки.");return}
+    if(title===item.title){setDealNameDrafts(current=>{const next={...current};delete next[item.id];return next});return}
+    setBusy(true);setError("");
+    try{
+      const saved=await req(`/deals/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title})});
+      setDeals(current=>current.map(dealItem=>dealItem.id===item.id?{...dealItem,...saved}:dealItem));
+      setDeal(current=>current?.id===item.id?{...current,...saved}:current);
+      setDealNameDrafts(current=>{const next={...current};delete next[item.id];return next});
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+  async function removeDeal(item:Deal){
+    if(!window.confirm(`Удалить сделку «${visibleDealTitle(item,deals)}» и связанные с ней документы, расчёты и файлы? Это действие нельзя отменить.`))return;
+    setBusy(true);setError("");
+    try{
+      await req(`/deals/${item.id}`,{method:"DELETE"});
+      const remaining=deals.filter(dealItem=>dealItem.id!==item.id);
+      setDeals(remaining);
+      setDealNameDrafts(current=>{const next={...current};delete next[item.id];return next});
+      if(deal?.id===item.id){
+        if(remaining[0])returnToDeal(remaining[0],true);
+        else{
+          window.localStorage.removeItem("dealCopilot.activeDealId");
+          setDeal(null);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setSelectedDoc(null);setParsed(null);setOrganizationProfile({});setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("deals");
+        }
+      }
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
   async function upload(files:FileList|null){
     if(!deal||!files||!files.length)return;
@@ -532,7 +562,7 @@ export default function Home(){
   ];
   const serviceTab={key:"pipeline",label:"Контроль обработки",title:"Контроль обработки",description:"Служебная информация о шагах распознавания и расчёта."};
   const formulaTab={key:"settings",label:"Настройки",title:"Настройки компании",description:"Прайс-лист услуг и формулы расчёта."};
-  const currentTab=tabs.find(tab=>tab.key===active)??(active==="pipeline"?serviceTab:active==="settings"?formulaTab:tabs[0]);
+  const currentTab=tabs.find(tab=>tab.key===active)??(active==="deals"?{key:"deals",title:"Сделки",description:"Откройте сохранённую сделку, измените её название или удалите запись."}:active==="pipeline"?serviceTab:active==="settings"?formulaTab:tabs[0]);
   const stageIndex=tabs.findIndex(tab=>tab.key===active);
   const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
@@ -603,11 +633,11 @@ export default function Home(){
     <main className="workspace">
       <header className="workspaceHeader">
         <div>
-          <p className="workspaceEyebrow">DEAL COPILOT <span>/</span> {deal?("СДЕЛКА #"+deal.id):"НОВЫЙ ПРОЕКТ"}</p>
+          <p className="workspaceEyebrow">DEAL COPILOT <span>/</span> {active==="deals"?"СПИСОК СДЕЛОК":deal?("СДЕЛКА #"+deal.id):"НОВЫЙ ПРОЕКТ"}</p>
           <h1>{currentTab.title}</h1>
           <p>{currentTab.description}</p>
         </div>
-        <div className="workspaceHeaderActions">{sidebarCollapsed&&<button type="button" className="sidebarRestore" onClick={()=>setSidebarCollapsed(false)} aria-label="Показать левую панель" title="Показать левую панель">☰</button>}{active!=="pipeline"&&<div className="workspaceStep"><span>ШАГ</span><b>{String(stageIndex+1).padStart(2,"0")}</b><i>/</i><span>{String(tabs.length).padStart(2,"0")}</span></div>}</div>
+        <div className="workspaceHeaderActions">{sidebarCollapsed&&<button type="button" className="sidebarRestore" onClick={()=>setSidebarCollapsed(false)} aria-label="Показать левую панель" title="Показать левую панель">☰</button>}<button type="button" className={active==="deals"?"headerDealList active":"headerDealList"} aria-current={active==="deals"?"page":undefined} onClick={()=>setActive("deals")}>Список сделок</button>{stageIndex>=0&&<div className="workspaceStep"><span>ШАГ</span><b>{String(stageIndex+1).padStart(2,"0")}</b><i>/</i><span>{String(tabs.length).padStart(2,"0")}</span></div>}</div>
       </header>
 
       {error&&<div className="error" role="alert">{error}</div>}
@@ -615,6 +645,15 @@ export default function Home(){
       {appSettings?.demo_mode&&<div className="demoNotice" role="note"><span className="noticeIcon" aria-hidden="true">i</span><span>Демонстрационный режим: модель не вызывается. Тарифы и нормы в примере условные; перед подготовкой реального КП замените их подтверждёнными данными.</span></div>}
 
       <div className="workspaceContent">
+    {active==="deals"&&<section className="panel dealManager">
+      <div className="sectionHead"><div><h2>Список сделок</h2><p className="muted">Откройте сделку, измените её название или удалите вместе с загруженными материалами.</p></div><button type="button" className="primary" disabled={busy} onClick={()=>void createDeal()}>Новая сделка</button></div>
+      <div className="dealManagerToolbar"><label>Поиск по названию или номеру<input value={dealSearch} onChange={event=>setDealSearch(event.target.value)} placeholder="Например, 7 или уборка"/></label><span>{visibleDeals.length} из {deals.length}</span></div>
+      {visibleDeals.length?<div className="dealManagerList">{visibleDeals.map(item=><article className={item.id===deal?.id?"dealManagerRow current":"dealManagerRow"} key={item.id}>
+        <div className="dealManagerInfo"><b>{visibleDealTitle(item,deals)}</b><small>№ {item.id} · {item.processed_document_count||0}/{item.document_count||0} документов обработано · {dealStageLabel(item)}{item.created_at?` · ${new Date(item.created_at).toLocaleDateString("ru-RU")}`:""}</small></div>
+        <label className="dealManagerName"><span>Название сделки</span><input aria-label={`Название сделки ${item.id}`} value={dealNameDrafts[item.id]??visibleDealTitle(item,deals)} onChange={event=>setDealNameDrafts(current=>({...current,[item.id]:event.target.value}))} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();void saveDealTitle(item)}}}/></label>
+        <div className="dealManagerActions"><button type="button" onClick={()=>returnToDeal(item)} disabled={busy||item.id===deal?.id}>Открыть</button><button type="button" onClick={()=>void saveDealTitle(item)} disabled={busy||(dealNameDrafts[item.id]??item.title).trim()===item.title}>Сохранить название</button><button type="button" className="dangerButton" onClick={()=>void removeDeal(item)} disabled={busy}>Удалить</button></div>
+      </article>)}</div>:<div className="empty">{deals.length?"По запросу ничего не найдено.":"Сделок пока нет. Создайте новую сделку, чтобы начать."}</div>}
+    </section>}
     {active==="upload"&&<section className="panel two">
       <div>
         <h2><span className="panelStep">01</span>Создать сделку</h2>
