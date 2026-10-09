@@ -180,6 +180,17 @@ details summary { cursor: pointer; }
 .sourceFileLink:hover { color: var(--green); }
 .field blockquote { padding-left: 12px; color: #c0d0dd; border-left: 2px solid #31526d; line-height: 1.6; white-space: pre-wrap; }
 .field blockquote mark { padding: 1px 2px; color: #10251d; background: #a5edc9; border-radius: 3px; }
+.manualServices { display: grid; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #203a50; }
+.manualServices h3 { margin: 0 0 5px; }
+.manualServiceRow, .manualServiceForm { padding: 13px; background: #0a1826; border: 1px solid #19334c; border-radius: 10px; }
+.manualServiceRowHead { display: flex; align-items: center; gap: 5px; color: #9cdbbf; font-size: 12px; }
+.manualServiceRow p { margin: 7px 0 0; color: #b6cad9; }
+.manualServiceFields, .manualServiceForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.manualServiceFields { margin-top: 10px; }
+.manualServiceFields label, .manualServiceForm label, .formulaSetting label { display: grid; min-width: 0; gap: 5px; color: #acc1d1; font-size: 12px; }
+.manualServiceFields input, .manualServiceForm input, .formulaSetting input { min-width: 0; width: 100%; padding: 9px; color: var(--text); background: #071421; border: 1px solid #29465e; border-radius: 8px; font: inherit; }
+.manualServiceForm button { align-self: end; }
+.dangerButton { color: #ff9eaa; border-color: #773b49; }
 .areaComponents { display: grid; gap: 12px; margin: 18px 0; }
 .areaComponents .sectionHead { margin: 0; }
 .areaComponents h3, .areaResults h3 { margin: 0 0 6px; }
@@ -255,7 +266,17 @@ details summary { cursor: pointer; }
 .proposalPreview { margin: 16px 0; padding: 16px; background: #0a1826; border: 1px solid #19334c; border-radius: 11px; }
 .proposalPreview h3 { margin: 0 0 10px; }
 .proposalPreview p { margin: 7px 0; }
-@media (max-width: 760px) { .areaComponentInputs, .areaSchedule { grid-template-columns: 1fr; } .areaTotal { align-items: flex-start; flex-direction: column; } }
+.formulaSettingsPanel { display: grid; gap: 16px; }
+.formulaNotice { padding: 13px 15px; color: #c3d5e2; background: #0b2032; border: 1px solid #204158; border-radius: 10px; line-height: 1.55; }
+.formulaList { display: grid; gap: 9px; }
+.formulaSetting { padding: 12px 14px; background: #0a1826; border: 1px solid #19334c; border-radius: 10px; }
+.formulaSetting summary { display: flex; justify-content: space-between; gap: 15px; cursor: pointer; }
+.formulaSetting summary code { color: #8dcab1; }
+.formulaSetting p, .formulaSetting small { color: #9eb5c8; }
+.formulaSetting label { margin: 12px 0 7px; }
+.formulaSetting small { display: block; overflow-wrap: anywhere; }
+.formulaActions { display: flex; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 760px) { .areaComponentInputs, .areaSchedule, .manualServiceFields, .manualServiceForm { grid-template-columns: 1fr; } .areaTotal { align-items: flex-start; flex-direction: column; } }
 .control { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, 150px); align-items: center; gap: 15px; margin: 9px 0; }
 .control input { min-width: 0; padding: 9px; color: white; background: #071421; border: 1px solid #29465e; border-radius: 8px; }
 .calcPreview { padding: 20px; background: #071522; border: 1px solid #17334b; border-radius: 13px; }

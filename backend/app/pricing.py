@@ -3,44 +3,60 @@ from __future__ import annotations
 import math
 
 from .config import settings
+from .formula_engine import DEFAULT_FORMULAS, FORMULA_BY_KEY, evaluate_formula
 from .schemas import CalculationRequest, CalculationResult
 
 
-def calculate(req: CalculationRequest, configuration=settings) -> CalculationResult:
-    # MVP-1: labor model. One regular-cleaning operation for the demo.
-    labor_hours_month = (
-        req.area_m2
-        / req.productivity_m2_per_shift
-        * configuration.hours_per_shift
-        * configuration.working_days_per_month
-    )
+def calculate(req: CalculationRequest, configuration=settings, formula_expressions: dict[str, str] | None = None) -> CalculationResult:
+    expressions = {**DEFAULT_FORMULAS, **(formula_expressions or {})}
+    values = {
+        "area_m2": req.area_m2,
+        "productivity_m2_per_shift": req.productivity_m2_per_shift,
+        "hours_per_shift": configuration.hours_per_shift,
+        "working_days_per_month": configuration.working_days_per_month,
+        "service_price_per_m2_month": req.service_price_per_m2_month,
+        "vat_rate": req.vat_rate,
+        "hourly_staff_cost": req.hourly_staff_cost,
+        "replacement_coefficient": req.replacement_coefficient,
+        "materials_per_m2_month": req.materials_per_m2_month,
+        "equipment_per_m2_month": req.equipment_per_m2_month,
+        "manager_monthly_cost": req.manager_monthly_cost,
+        "logistics_monthly": req.logistics_monthly,
+        "contingency_rate": req.contingency_rate,
+        "overhead_rate": req.overhead_rate,
+        "target_margin": req.target_margin,
+    }
+    formula = lambda key: evaluate_formula(expressions[key], FORMULA_BY_KEY[key].variables, values)
+    labor_hours_month = formula("labor_hours_month")
     fte = labor_hours_month / req.monthly_hours_per_fte
     physical_staff = max(
         configuration.minimum_physical_staff,
         math.ceil(fte * req.replacement_coefficient),
     )
 
-    # MVP-2: deterministic economics.
-    revenue_with_vat = req.area_m2 * req.service_price_per_m2_month
-    revenue_net = revenue_with_vat / (1 + req.vat_rate)
-    labor_cost = labor_hours_month * req.hourly_staff_cost * req.replacement_coefficient
-    materials = req.area_m2 * req.materials_per_m2_month
-    equipment = req.area_m2 * req.equipment_per_m2_month
-    direct_cost = labor_cost + req.manager_monthly_cost + materials + equipment + req.logistics_monthly
-    contingency = direct_cost * req.contingency_rate
-    overhead = revenue_net * req.overhead_rate
-    full_cost = direct_cost + contingency + overhead
-    profit = revenue_net - full_cost
-    margin = profit / revenue_net
+    values["labor_hours_month"] = labor_hours_month
+    values["revenue_with_vat"] = formula("revenue_with_vat")
+    values["revenue_net"] = formula("revenue_net")
+    values["labor_cost"] = formula("labor_cost")
+    values["materials_cost"] = formula("materials_cost")
+    values["equipment_cost"] = formula("equipment_cost")
+    values["direct_cost"] = formula("direct_cost")
+    values["contingency_cost"] = formula("contingency_cost")
+    values["overhead_cost"] = formula("overhead_cost")
+    values["full_cost"] = formula("full_cost")
+    values["profit"] = formula("profit")
+    values["margin"] = formula("margin")
+    values["break_even_price_per_m2"] = formula("break_even_price_per_m2")
+    values["target_price_per_m2"] = formula("target_price_per_m2")
 
-    fixed_plus_direct = direct_cost + contingency
-    net_share_break_even = 1 - req.overhead_rate
-    break_even_net = fixed_plus_direct / net_share_break_even
-    break_even_price = break_even_net * (1 + req.vat_rate) / req.area_m2
-
-    net_share_target = 1 - req.overhead_rate - req.target_margin
-    target_net = fixed_plus_direct / net_share_target
-    target_price = target_net * (1 + req.vat_rate) / req.area_m2
+    revenue_with_vat = values["revenue_with_vat"]
+    revenue_net = values["revenue_net"]
+    direct_cost = values["direct_cost"]
+    full_cost = values["full_cost"]
+    profit = values["profit"]
+    margin = values["margin"]
+    break_even_price = values["break_even_price_per_m2"]
+    target_price = values["target_price_per_m2"]
 
     # MVP-3 deterministic BID rules.
     conditions: list[str] = []
@@ -57,10 +73,28 @@ def calculate(req: CalculationRequest, configuration=settings) -> CalculationRes
     sensitivity = []
     for delta in configuration.parsed_sensitivity_deltas:
         price = req.service_price_per_m2_month * (1 + delta)
-        net = req.area_m2 * price / (1 + req.vat_rate)
-        oh = net * req.overhead_rate
-        p = net - (direct_cost + contingency + oh)
-        sensitivity.append({"delta":delta,"price":price,"margin":p/net})
+        net = evaluate_formula(expressions["revenue_net"], FORMULA_BY_KEY["revenue_net"].variables,
+                               {**values, "revenue_with_vat": req.area_m2 * price})
+        oh = evaluate_formula(expressions["overhead_cost"], FORMULA_BY_KEY["overhead_cost"].variables,
+                              {**values, "revenue_net": net})
+        scenario_values = {
+            **values,
+            "revenue_net": net,
+            "overhead_cost": oh,
+            "full_cost": evaluate_formula(
+                expressions["full_cost"],
+                FORMULA_BY_KEY["full_cost"].variables,
+                {**values, "overhead_cost": oh},
+            ),
+        }
+        p = evaluate_formula(
+            expressions["profit"],
+            FORMULA_BY_KEY["profit"].variables,
+            scenario_values,
+        )
+        sensitivity_margin = evaluate_formula(expressions["margin"], FORMULA_BY_KEY["margin"].variables,
+                                              {**scenario_values, "profit": p, "revenue_net": net})
+        sensitivity.append({"delta":delta,"price":price,"margin":sensitivity_margin})
 
     return CalculationResult(
         labor_hours_month=round(labor_hours_month,configuration.labor_hours_decimal_places),

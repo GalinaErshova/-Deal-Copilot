@@ -138,6 +138,33 @@ class CalculationBreakdownRequest(BaseModel):
             raise ValueError("component ids must be unique")
         return self
 
+class ManualServiceLineRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    address: str = Field(min_length=1, max_length=500)
+    area_type: str = Field(default="Площадь объекта", max_length=200)
+    work_type: str = Field(min_length=1, max_length=250)
+    area_m2: float = Field(gt=0)
+    schedule_mode: Literal["daily", "weekly", "monthly", "on_request", "custom", "unspecified"] = "unspecified"
+    shifts_per_month: float | None = Field(default=None, gt=0)
+    productivity_m2_per_shift: float | None = Field(default=None, gt=0)
+
+class ManualServiceLineUpdate(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    address: str | None = Field(default=None, min_length=1, max_length=500)
+    area_type: str | None = Field(default=None, max_length=200)
+    work_type: str | None = Field(default=None, min_length=1, max_length=250)
+    area_m2: float | None = Field(default=None, gt=0)
+    schedule_mode: Literal["daily", "weekly", "monthly", "on_request", "custom", "unspecified"] | None = None
+    shifts_per_month: float | None = Field(default=None, gt=0)
+    productivity_m2_per_shift: float | None = Field(default=None, gt=0)
+
+class CalculationFormulaItem(BaseModel):
+    key: str
+    expression: str = Field(min_length=1, max_length=240)
+
+class CalculationFormulaUpdate(BaseModel):
+    formulas: list[CalculationFormulaItem] = Field(min_length=1)
+
 class ManualAreaFieldRequest(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     value: float = Field(gt=0)

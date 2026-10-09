@@ -15,7 +15,8 @@ type OrganizationSource={value:string;document_id:number;document_name:string;so
 type OrganizationProfile=Record<string,OrganizationSource>;
 type ProcessProgress={value:number;label:string};
 type ScheduleMode="daily"|"weekly"|"monthly"|"on_request"|"custom"|"unspecified";
-type AreaComponent={id:string;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;labor_hours_month?:number;fte?:number;physical_staff?:number};
+type AreaComponent={id:string;origin?:"document"|"manual";manual_line_id?:number;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number|null;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;monthly_price?:number;contract_price?:number;labor_hours_month?:number;fte?:number;physical_staff?:number};
+type FormulaSetting={key:string;label:string;description:string;expression:string;default_expression:string;variables:string[]};
 type Calc={calculation_id:number;area_m2?:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
 type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
@@ -102,6 +103,9 @@ export default function Home(){
   const [proposalForm,setProposalForm]=useState({customer_name:"",customer_address:"",customer_inn:"",customer_kpp:"",customer_ogrn:"",customer_contact_person:"",customer_phone:"",customer_email:"",supplier_name:"",contact_details:"",validity_days:10,additional_terms:""});
   const [organizationProfile,setOrganizationProfile]=useState<OrganizationProfile>({});
   const [proposalTouched,setProposalTouched]=useState<Set<string>>(new Set());
+  const [formulaSettings,setFormulaSettings]=useState<FormulaSetting[]>([]);
+  const [formulaBusy,setFormulaBusy]=useState(false);
+  const [manualServiceDraft,setManualServiceDraft]=useState({address:"",area_type:"Площадь объекта",work_type:"",area_m2:""});
   const [busy,setBusy]=useState(false);
   const [selectedDoc,setSelectedDoc]=useState<number|null>(null);
   const [parsed,setParsed]=useState<any>(null);
@@ -163,6 +167,7 @@ export default function Home(){
       }
     }).catch((e:any)=>setError(e.message));
   },[]);
+  useEffect(()=>{req("/formulas").then(setFormulaSettings).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
   useEffect(()=>{
     const profileFields=["customer_name","customer_address","customer_inn","customer_kpp","customer_ogrn","customer_contact_person","customer_phone","customer_email"] as const;
@@ -321,7 +326,10 @@ export default function Home(){
   }
 
   function updateScheduleMode(id:string,mode:ScheduleMode){
-    updateAreaComponent(id,{schedule_mode:mode,shifts_per_month:shiftsForMode(mode,appSettings)});
+    const patch={schedule_mode:mode,shifts_per_month:shiftsForMode(mode,appSettings)};
+    updateAreaComponent(id,patch);
+    const component=areaComponents.find(item=>item.id===id);
+    if(component?.origin==="manual")void saveManualServiceLine(component,patch);
   }
 
   function updateCalculationValue(key:keyof CalculationForm,value:number,preserveConfirmation=false){
@@ -344,6 +352,47 @@ export default function Home(){
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
+  async function addManualServiceLine(){
+    if(!deal)return;
+    const area=Number(manualServiceDraft.area_m2.replace(",","."));
+    if(!manualServiceDraft.address.trim()||!manualServiceDraft.work_type.trim()||!Number.isFinite(area)||area<=0){
+      setError("Для ручной услуги укажите адрес, вид работ и положительную площадь.");return;
+    }
+    setBusy(true);setError("");
+    try{
+      await req(`/deals/${deal.id}/area-components/manual`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...manualServiceDraft,address:manualServiceDraft.address.trim(),work_type:manualServiceDraft.work_type.trim(),area_m2:area})});
+      setManualServiceDraft({address:"",area_type:"Площадь объекта",work_type:"",area_m2:""});
+      setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);await refresh();
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+
+  async function saveManualServiceLine(line:AreaComponent,patch:Partial<AreaComponent>){
+    if(!deal||!line.manual_line_id)return;
+    const payload=Object.fromEntries(Object.entries(patch).filter(([key])=>["address","area_type","work_type","area_m2","schedule_mode","shifts_per_month","productivity_m2_per_shift"].includes(key)));
+    if(!Object.keys(payload).length)return;
+    try{
+      await req(`/deals/${deal.id}/area-components/manual/${line.manual_line_id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    }catch(e:any){setError(e.message)}
+  }
+
+  async function deleteManualServiceLine(line:AreaComponent){
+    if(!deal||!line.manual_line_id)return;
+    setBusy(true);setError("");
+    try{
+      await req(`/deals/${deal.id}/area-components/manual/${line.manual_line_id}`,{method:"DELETE"});
+      setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);await refresh();
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+
+  async function saveCalculationFormulas(){
+    setFormulaBusy(true);setError("");
+    try{
+      const saved=await req("/formulas",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({formulas:formulaSettings.map(({key,expression})=>({key,expression}))})});
+      setFormulaSettings(saved);setCalculationDirty(Boolean(calc));
+    }catch(e:any){setError(e.message)}finally{setFormulaBusy(false)}
+  }
+
   const tabs=[
     {key:"upload",label:"Новая сделка",title:"Рабочее пространство",description:"Создайте сделку и загрузите тендерные материалы."},
     {key:"documents",label:"Документы",title:"Документы",description:"Сопоставьте оригинал файла с результатом разбора."},
@@ -353,7 +402,8 @@ export default function Home(){
     {key:"proposal",label:"Коммерческое предложение",title:"Формирование КП",description:"Подготовьте редактируемый проект коммерческого предложения по подтверждённым данным."},
   ];
   const serviceTab={key:"pipeline",label:"Контроль обработки",title:"Контроль обработки",description:"Служебная информация о шагах распознавания и расчёта."};
-  const currentTab=tabs.find(tab=>tab.key===active)??(active==="pipeline"?serviceTab:tabs[0]);
+  const formulaTab={key:"settings",label:"Настройки расчёта",title:"Настройки формул",description:"Просмотр и редактирование формул трудоёмкости, стоимости и маржинальности."};
+  const currentTab=tabs.find(tab=>tab.key===active)??(active==="pipeline"?serviceTab:active==="settings"?formulaTab:tabs[0]);
   const stageIndex=tabs.findIndex(tab=>tab.key===active);
   const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
@@ -398,6 +448,9 @@ export default function Home(){
       <nav className="sideNav serviceNav" aria-label="Служебные разделы">
         <button className={active==="pipeline"?"active":""} aria-current={active==="pipeline"?"page":undefined} onClick={()=>setActive("pipeline")}>
           <span className="navIndex">⚙</span><span><b>Контроль обработки</b><small>Журнал шагов и ошибок</small></span><span className="navArrow" aria-hidden="true">→</span>
+        </button>
+        <button className={active==="settings"?"active":""} aria-current={active==="settings"?"page":undefined} onClick={()=>setActive("settings")}>
+          <span className="navIndex">⚙</span><span><b>Настройки расчёта</b><small>Формулы и маржа</small></span><span className="navArrow" aria-hidden="true">→</span>
         </button>
       </nav>
 
@@ -493,6 +546,26 @@ export default function Home(){
           <details><summary>Цитата в документе</summary><p className="sourceReference"><b>{f.source_document_id?<button type="button" className="sourceFileLink" onClick={()=>void openDoc(f.source_document_id!,f.source_location||undefined)}>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Открыть документ"}</button>:"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote></details>
         </div>)}
       </div>
+      <div className="manualServices">
+        <div><h3>Требуемые услуги</h3><p className="muted">Строки из тендерных документов и добавленные вручную участвуют в расчёте. Для ручной строки задайте площадь и вид работ здесь, затем на вкладке «Трудоёмкость» заполните выработку и режим.</p></div>
+        {areaComponents.map(component=><div className="manualServiceRow" key={component.id}>
+          <div className="manualServiceRowHead"><b>{component.origin==="manual"?"Ручная строка":"Из документа"}</b>{component.origin!=="manual"&&sourceArrow(component.source_document_id,component.source_location,`Открыть источник строки ${component.address}`,component.source_document_name)}</div>
+          {component.origin==="manual"?<div className="manualServiceFields">
+            <label>Адрес<input value={component.address} onChange={e=>updateAreaComponent(component.id,{address:e.target.value})} onBlur={e=>void saveManualServiceLine(component,{address:e.target.value})}/></label>
+            <label>Вид площади<input value={component.area_type} onChange={e=>updateAreaComponent(component.id,{area_type:e.target.value})} onBlur={e=>void saveManualServiceLine(component,{area_type:e.target.value})}/></label>
+            <label>Вид работ<input value={component.work_type} onChange={e=>updateAreaComponent(component.id,{work_type:e.target.value})} onBlur={e=>void saveManualServiceLine(component,{work_type:e.target.value})}/></label>
+            <label>Площадь, м²<input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})} onBlur={e=>void saveManualServiceLine(component,{area_m2:Number(e.target.value)})}/></label>
+            <button type="button" className="dangerButton" disabled={busy} onClick={()=>void deleteManualServiceLine(component)}>Удалить строку</button>
+          </div>:<p>{component.address} · {component.area_type} · {component.work_type} · {fmt(component.area_m2,appSettings?.display_locale||"ru-RU",appSettings?.display_number_max_fraction_digits||1)} м²</p>}
+        </div>)}
+        <div className="manualServiceForm">
+          <label>Адрес<input value={manualServiceDraft.address} onChange={e=>setManualServiceDraft({...manualServiceDraft,address:e.target.value})} placeholder="Адрес или название объекта"/></label>
+          <label>Вид площади<input value={manualServiceDraft.area_type} onChange={e=>setManualServiceDraft({...manualServiceDraft,area_type:e.target.value})} placeholder="Помещения, территория…"/></label>
+          <label>Требуемая услуга<input value={manualServiceDraft.work_type} onChange={e=>setManualServiceDraft({...manualServiceDraft,work_type:e.target.value})} placeholder="Например, уборка снега"/></label>
+          <label>Площадь, м²<input type="number" min="0" step="any" value={manualServiceDraft.area_m2} onChange={e=>setManualServiceDraft({...manualServiceDraft,area_m2:e.target.value})}/></label>
+          <button type="button" disabled={busy} onClick={()=>void addManualServiceLine()}>Добавить услугу в расчёт</button>
+        </div>
+      </div>
     </section>}
 
     {active==="workforce"&&<section className="panel">
@@ -504,21 +577,21 @@ export default function Home(){
           ["replacement_coefficient","Коэффициент замещения"]
         ].map(function(x){const k=x[0] as keyof CalculationForm;return <label className="control" key={k}><span>{x[1]}</span><input type="number" step="any" value={form[k]} onChange={e=>updateCalculationValue(k,Number(e.target.value))}/></label>})}
         {areaComponents.length>0&&<div className="areaComponents">
-          <div className="sectionHead"><div><h3>Площади по адресам и видам работ</h3><p className="muted">Адреса и вид уборки извлечены из ТЗ. Выработка подставляется из внутреннего справочника, если найдена подходящая ставка.</p></div></div>
-          <div className="areaTotal"><span>Суммарная площадь без строк «Итого»</span><b>{appSettings?fmt(areaComponents.reduce((sum,item)=>sum+item.area_m2,0),appSettings.display_locale,appSettings.display_number_max_fraction_digits):areaComponents.reduce((sum,item)=>sum+item.area_m2,0)} м²</b></div>
+          <div className="sectionHead"><div><h3>Услуги по адресам и видам работ</h3><p className="muted">В расчёт вошли строки из ТЗ и ручные услуги. Выработка подставляется из справочника, если найдена подходящая ставка.</p></div></div>
+          <div className="areaTotal"><span>Суммарная площадь услуг</span><b>{appSettings?fmt(areaComponents.reduce((sum,item)=>sum+item.area_m2,0),appSettings.display_locale,appSettings.display_number_max_fraction_digits):areaComponents.reduce((sum,item)=>sum+item.area_m2,0)} м²</b></div>
           {areaComponents.map(component=><div className="areaComponent" key={component.id}>
             <div className="areaComponentTitle"><b>{component.address}</b><span className="workTypeValue"><strong>{component.work_type}</strong>{sourceArrow(component.work_type_source_document_id,component.work_type_source_location,`Открыть источник вида работ для адреса ${component.address}`,docs.find(doc=>doc.id===component.work_type_source_document_id)?.filename)}</span><small>{component.area_type}</small></div>
             <div className="areaLineInputs">
-              <label><span className="areaMeasureLabel">Площадь, м²{sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})}/></label>
+              <label><span className="areaMeasureLabel">Площадь, м²{component.origin!=="manual"&&sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</span><input type="number" min="0" step="any" value={component.area_m2} onChange={e=>updateAreaComponent(component.id,{area_m2:e.target.value?Number(e.target.value):0})} onBlur={e=>component.origin==="manual"&&void saveManualServiceLine(component,{area_m2:Number(e.target.value)})}/></label>
               <div className="productivityField">
                 <div className="productivityFieldLabel"><label htmlFor={`productivity-${component.id}`}>Выработка, м²/смену</label><button type="button" className="helpIcon" aria-label={`Пояснить выработку для адреса ${component.address}`} title="Что означает выработка?" onClick={()=>setProductivityHelp(component)}>i</button></div>
-                <input id={`productivity-${component.id}`} type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Нет ставки для этого вида работ" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/>
+                <input id={`productivity-${component.id}`} type="number" min="0" step="any" value={component.productivity_m2_per_shift??""} placeholder="Нет ставки для этого вида работ" onChange={e=>updateAreaComponent(component.id,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})} onBlur={e=>component.origin==="manual"&&void saveManualServiceLine(component,{productivity_m2_per_shift:e.target.value?Number(e.target.value):null})}/>
               </div>
               <label><span>Режим{sourceArrow(component.schedule_source_document_id,component.schedule_source_location,`Открыть источник режима для адреса ${component.address}`,component.schedule_source_document_name||"Источник режима")}</span><select value={component.schedule_mode} onChange={e=>updateScheduleMode(component.id,e.target.value as ScheduleMode)}>
                 <option value="daily">Каждый рабочий день</option><option value="weekly">Еженедельно</option><option value="monthly">Ежемесячно</option>
                 <option value="on_request">По разовым заявкам</option><option value="custom">Другой режим — ввести число смен</option><option value="unspecified">В ТЗ не указан — ввести число смен</option>
               </select></label>
-              <label><span>{component.schedule_mode==="on_request"?"Заявок/выездов в месяц":"Смен в месяц"}</span><input type="number" min="0" step="any" value={shiftsForMode(component.schedule_mode,appSettings)??component.shifts_per_month??""} readOnly={shiftsForMode(component.schedule_mode,appSettings)!==null} placeholder="Укажите ожидаемое число" onChange={e=>updateAreaComponent(component.id,{shifts_per_month:e.target.value?Number(e.target.value):null})}/></label>
+              <label><span>{component.schedule_mode==="on_request"?"Заявок/выездов в месяц":"Смен в месяц"}</span><input type="number" min="0" step="any" value={shiftsForMode(component.schedule_mode,appSettings)??component.shifts_per_month??""} readOnly={shiftsForMode(component.schedule_mode,appSettings)!==null} placeholder="Укажите ожидаемое число" onChange={e=>updateAreaComponent(component.id,{shifts_per_month:e.target.value?Number(e.target.value):null})} onBlur={e=>component.origin==="manual"&&void saveManualServiceLine(component,{shifts_per_month:e.target.value?Number(e.target.value):null})}/></label>
             </div>
             {component.productivity_reference&&<p className="fieldHint">Ставка из справочника «{component.productivity_reference.name.replace(/\bMVP\b/gi,"").trim()}»: {component.productivity_reference.value} {component.productivity_reference.unit}. Проверьте её и при необходимости замените.</p>}
             {!(component.productivity_m2_per_shift&&component.productivity_m2_per_shift>0)&&<p className="warning">{component.productivity_reference?"Введите положительную выработку для этой строки.":"В справочнике нет выработки для этого вида работ. Введите значение из вашего прайса или внутренней нормы."}</p>}
@@ -531,8 +604,8 @@ export default function Home(){
           </div>)}
           {calc?.components?.length&&appSettings&&<div className="areaResults">
             <h3>Расчёт по адресам и видам работ</h3>
-            <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Выработка</th><th>Режим</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
-              {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.work_type}</small></td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² {sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</td><td>{component.productivity_m2_per_shift} м²/смену</td><td>{component.schedule_label} {sourceArrow(component.schedule_source_document_id,component.schedule_source_location,`Открыть источник режима для адреса ${component.address}`,component.schedule_source_document_name||"Источник режима")}</td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
+            <div className="areaResultsTable"><table><thead><tr><th>Адрес и вид работ</th><th>Площадь</th><th>Тариф и стоимость КП</th><th>Выработка</th><th>Режим</th><th>Смен/мес.</th><th>Часов/мес.</th><th>FTE</th><th>Сотрудников</th></tr></thead><tbody>
+              {calc.components.map(component=><tr key={component.id}><td><b>{component.address}</b><small>{component.work_type}</small>{component.origin==="manual"&&<small>Добавлено вручную</small>}</td><td>{fmt(component.area_m2,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² {component.origin!=="manual"&&sourceArrow(component.source_document_id,component.source_location,`Открыть источник площади для адреса ${component.address}`,component.source_document_name)}</td><td>{fmt(component.monthly_price||0,appSettings.display_locale,appSettings.display_currency_max_fraction_digits)} {appSettings.currency_unit_symbol}/мес.</td><td>{component.productivity_m2_per_shift} м²/смену</td><td>{component.schedule_label} {component.origin!=="manual"&&sourceArrow(component.schedule_source_document_id,component.schedule_source_location,`Открыть источник режима для адреса ${component.address}`,component.schedule_source_document_name||"Источник режима")}</td><td>{fmt(component.shifts_per_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.labor_hours_month||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{fmt(component.fte||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)}</td><td>{component.physical_staff}</td></tr>)}
             </tbody></table></div>
             <p className="areaResultsTotal">Итого: {fmt(calc.total_area_m2||0,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} м² · {fmt(calc.labor_hours_month,appSettings.display_locale,appSettings.display_number_max_fraction_digits)} чел.-часов/мес. · {calc.physical_staff_by_site} сотрудников</p>
           </div>}
@@ -601,9 +674,26 @@ export default function Home(){
           <label>Срок действия, дней<input type="number" min="1" max="365" value={proposalForm.validity_days} onChange={e=>updateProposalField("validity_days",Number(e.target.value))}/></label>
           <label className="proposalWide">Дополнительные условия<textarea rows={3} value={proposalForm.additional_terms} onChange={e=>updateProposalField("additional_terms",e.target.value)} placeholder="Условия оплаты, сроки начала работ и другие согласованные детали"/></label>
         </div>
-        <div className="proposalPreview"><h3>Предварительный состав КП</h3><p><b>{proposalForm.customer_name||"[указать заказчика]"}</b> · {proposalForm.supplier_name||"[указать исполнителя]"}</p><p>{calc.components?.length||areaComponents.length} строк адресов и видов работ · {fmt(calc.total_area_m2||calc.components?.reduce((sum,item)=>sum+item.area_m2,0)||form?.area_m2||0,appSettings?.display_locale||"ru-RU",appSettings?.display_number_max_fraction_digits||1)} м²</p><p>Стоимость: {appSettings?money(calc.revenue_with_vat,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.revenue_with_vat} в месяц · срок {proposalContractMonths} мес.</p><p className="muted">Данные КП проверяются отдельно от внутренней экономики: маржа и себестоимость в файл не включаются.</p></div>
+        <div className="proposalPreview"><h3>Предварительный состав КП</h3><p><b>{proposalForm.customer_name||"[указать заказчика]"}</b> · {proposalForm.supplier_name||"[указать исполнителя]"}</p><p>{calc.components?.length||areaComponents.length} строк адресов и видов работ · {fmt(calc.total_area_m2||calc.components?.reduce((sum,item)=>sum+item.area_m2,0)||form?.area_m2||0,appSettings?.display_locale||"ru-RU",appSettings?.display_number_max_fraction_digits||1)} м²</p><p>Стоимость: {appSettings?money(calc.revenue_with_vat,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.revenue_with_vat} в месяц · срок {proposalContractMonths} мес.</p><p>За весь срок: {appSettings?money(calc.components?.length?calc.components.reduce((sum,item)=>sum+(item.contract_price||0),0):calc.revenue_with_vat*proposalContractMonths,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.components?.reduce((sum,item)=>sum+(item.contract_price||0),0)||calc.revenue_with_vat*proposalContractMonths}</p><p className="muted">Данные КП проверяются отдельно от внутренней экономики: маржа и себестоимость в файл не включаются.</p></div>
         <button className="primary" disabled={busy} onClick={downloadProposal}>Скачать проект КП (.docx)</button>
       </>}
+    </section>}
+
+    {active==="settings"&&<section className="panel formulaSettingsPanel">
+      <div className="sectionHead"><div><h2>Формулы расчёта</h2><p className="muted">Просматривайте и изменяйте формулы трудозатрат, себестоимости, тарифа КП и маржинальности. Новые формулы применяются при следующем пересчёте.</p></div></div>
+      <div className="formulaNotice"><b>Формула маржинальности:</b> прибыль ÷ выручка без НДС. Внутри расчёта используется доля: `0.2` означает `20%`. Разрешены числа, указанные переменные, скобки и операции `+ − * /`; произвольный код не выполняется.</div>
+      <div className="formulaList">{formulaSettings.map(item=><details className="formulaSetting" key={item.key} open={item.key==="margin"}>
+        <summary><b>{item.label}</b><code>{item.key}</code></summary>
+        <p>{item.description}</p>
+        <label>Формула<input value={item.expression} onChange={event=>setFormulaSettings(current=>current.map(formula=>formula.key===item.key?({...formula,expression:event.target.value}):formula))}/></label>
+        <small>Доступные переменные: {item.variables.join(", ")}</small>
+      </details>)}</div>
+      <div className="formulaActions">
+        <button className="primary" disabled={formulaBusy||formulaSettings.length===0} onClick={()=>void saveCalculationFormulas()}>{formulaBusy?"Сохраняю…":"Сохранить формулы"}</button>
+        <button type="button" disabled={formulaBusy||formulaSettings.length===0} onClick={()=>setFormulaSettings(current=>current.map(item=>({...item,expression:item.default_expression})))}>Восстановить исходные формулы</button>
+        <button type="button" onClick={()=>setActive(calc?"economics":"workforce")}>Перейти к пересчёту →</button>
+      </div>
+      {calculationDirty&&calc&&<p className="warning">Формулы сохранены. Результат показывает предыдущий расчёт — запустите пересчёт на вкладке «Экономика».</p>}
     </section>}
 
     {active==="pipeline"&&<section className="panel">
@@ -611,7 +701,7 @@ export default function Home(){
       <p className="muted">Для каждого шага доступны вход, выход, длительность и предупреждения.</p>
       {runs.length===0?<div className="empty">Пока нет запусков.</div>:runs.map(run=><div className="run" key={run.id}><h3>{"Запуск #"+run.id+" · "+run.status}</h3>{run.steps.map((s,i)=><details className={"step "+s.status} key={i}><summary><span>{(s.status==="success"?"✓":s.status==="failed"?"✕":"○")+" "+s.name}</span><small>{s.duration_ms?String(s.duration_ms)+" ms":""}</small></summary><div className="stepBody">{s.warnings?.map(w=><p className="warning" key={w}>{w}</p>)}<div className="json"><b>Вход</b><pre>{JSON.stringify(s.input,null,2)}</pre></div><div className="json"><b>Выход</b><pre>{JSON.stringify(s.output,null,2)}</pre></div></div></details>)}</div>)}
     </section>}
-        {active!=="pipeline"&&<nav className="stageNav" aria-label="Переход между этапами">
+        {active!=="pipeline"&&active!=="settings"&&<nav className="stageNav" aria-label="Переход между этапами">
           <button type="button" onClick={()=>moveStage(-1)} disabled={stageIndex<=0}>← Назад</button>
           <span>Этап {stageIndex+1} из {tabs.length}</span>
           <button type="button" className="primary" onClick={()=>moveStage(1)} disabled={stageIndex>=tabs.length-1}>Далее →</button>

@@ -83,3 +83,22 @@ class Calculation(Base):
     input_json: Mapped[str] = mapped_column(Text)
     output_json: Mapped[str] = mapped_column(Text)
     decision: Mapped[str] = mapped_column(String(40))
+
+class ManualServiceLine(Base):
+    __tablename__ = "manual_service_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    deal_id: Mapped[int] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), index=True)
+    address: Mapped[str] = mapped_column(String(500))
+    area_type: Mapped[str] = mapped_column(String(200), default="Площадь объекта")
+    work_type: Mapped[str] = mapped_column(String(250))
+    area_m2: Mapped[float] = mapped_column(Float)
+    schedule_mode: Mapped[str] = mapped_column(String(30), default="unspecified")
+    shifts_per_month: Mapped[float | None] = mapped_column(Float, nullable=True)
+    productivity_m2_per_shift: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+
+class CalculationFormula(Base):
+    __tablename__ = "calculation_formulas"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    expression: Mapped[str] = mapped_column(String(240))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
