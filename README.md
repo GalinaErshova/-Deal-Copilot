@@ -89,6 +89,9 @@ the pipeline records the omitted character count. Increase the limit or reduce t
 set before retrying. Backend tests cover these behaviors; the frontend build checks types
 and compilation. Browser acceptance requires a running local app.
 
+PDF text inside an empty geometric table frame is kept as a paragraph, so a false table
+detection cannot silently remove that text from extraction.
+
 ## Secret handling
 
 Never commit API keys. `.env` is ignored. Only placeholders belong in `.env.example`.

@@ -321,13 +321,14 @@ def parse_pdf(data: bytes) -> ParsedDocument:
             table_frames = list(page.find_tables().tables)
         except Exception:  # noqa: BLE001 — распознавание геометрии таблиц эвристическое
             warnings.append(f"Стр. {page_index}: не удалось проверить структуру таблиц")
-        table_bounds = [tuple(frame.bbox) for frame in table_frames]
+        table_bounds = []
         positioned: list[tuple[float, ParsedBlock]] = []
         for table_index, frame in enumerate(table_frames, start=1):
             rows = [[_cell(value) for value in row] for row in frame.extract()]
             rows = [[cell.strip() for cell in row] for row in rows]
             text = _table_text(rows)
             if text:
+                table_bounds.append(tuple(frame.bbox))
                 positioned.append((frame.bbox[1], ParsedBlock(
                     "table", text, f"/page/{page_index}/t/{table_index}", page_no=page_index, rows=rows
                 )))
@@ -345,7 +346,7 @@ def parse_pdf(data: bytes) -> ParsedDocument:
             if text and not overlaps_table:
                 page_text.append(text)
                 positioned.append((block[1], ParsedBlock("paragraph",text,f"/page/{page_index}/p/{idx}",page_no=page_index)))
-        if not page_text and not table_frames:
+        if not positioned:
             scanned_pages += 1
             blocks.append(ParsedBlock("scan","",f"/page/{page_index}/scan",page_no=page_index))
         else:

@@ -226,6 +226,35 @@ def test_pdf_parser_detects_tables_as_structured_blocks():
     assert "Field: Area" in table.text
 
 
+def test_pdf_empty_geometric_table_does_not_hide_paragraph(monkeypatch):
+    from types import SimpleNamespace
+
+    import fitz
+
+    from app.document_processing import parse_pdf
+
+    class EmptyFrame:
+        bbox = (40, 40, 360, 160)
+
+        def extract(self):
+            return [["", ""], ["", ""]]
+
+    class Page:
+        def find_tables(self):
+            return SimpleNamespace(tables=[EmptyFrame()])
+
+        def get_text(self, mode):
+            assert mode == "blocks"
+            return [(60, 70, 300, 95, "Требование внутри рамки", 0, 0)]
+
+    monkeypatch.setattr(fitz, "open", lambda **_kwargs: [Page()])
+    parsed = parse_pdf(b"fake-pdf")
+
+    assert [block.kind for block in parsed.blocks] == ["paragraph"]
+    assert parsed.blocks[0].text == "Требование внутри рамки"
+    assert parsed.blocks[0].path == "/page/1/p/1"
+
+
 def test_field_source_requires_matching_path_and_verbatim_fragment():
     document = {
         "blocks": [{"path": "/page/4/p/3", "page_no": 4, "text": "Общая площадь 8426,7 кв. м."}]
