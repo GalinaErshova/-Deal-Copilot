@@ -43,6 +43,19 @@ class FormulaError(ValueError):
     """Некорректная или небезопасная формула."""
 
 
+MAX_FORMULA_VALUE = 1e100
+
+
+def _finite_value(value: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise FormulaError("Формула вернула недопустимое числовое значение") from exc
+    if not math.isfinite(number) or abs(number) > MAX_FORMULA_VALUE:
+        raise FormulaError("Формула вернула недопустимое числовое значение")
+    return number
+
+
 def _validated_tree(expression: str, allowed_variables: set[str]) -> ast.Expression:
     if not isinstance(expression, str) or not expression.strip() or len(expression) > 240:
         raise FormulaError("Формула должна содержать от 1 до 240 символов")
@@ -61,6 +74,8 @@ def _validated_tree(expression: str, allowed_variables: set[str]) -> ast.Express
             raise FormulaError(f"Неизвестная переменная: {node.id}")
         if isinstance(node, ast.Constant) and (isinstance(node.value, bool) or not isinstance(node.value, (int, float))):
             raise FormulaError("В формуле допустимы только числовые константы")
+        if isinstance(node, ast.Constant):
+            _finite_value(node.value)
     return tree
 
 
@@ -74,16 +89,16 @@ def evaluate_formula(expression: str, variables: tuple[str, ...] | list[str], va
 
     def evaluate(node: ast.AST) -> float:
         if isinstance(node, ast.Expression):
-            return evaluate(node.body)
+            return _finite_value(evaluate(node.body))
         if isinstance(node, ast.Constant):
-            return float(node.value)
+            return _finite_value(node.value)
         if isinstance(node, ast.Name):
             if node.id not in values:
                 raise FormulaError(f"Нет значения переменной: {node.id}")
-            return float(values[node.id])
+            return _finite_value(values[node.id])
         if isinstance(node, ast.UnaryOp):
             value = evaluate(node.operand)
-            return value if isinstance(node.op, ast.UAdd) else -value
+            return _finite_value(value if isinstance(node.op, ast.UAdd) else -value)
         if isinstance(node, ast.BinOp):
             left, right = evaluate(node.left), evaluate(node.right)
             if isinstance(node.op, ast.Add):
@@ -96,12 +111,10 @@ def evaluate_formula(expression: str, variables: tuple[str, ...] | list[str], va
                 if right == 0:
                     raise FormulaError("Деление на ноль: проверьте исходные данные и формулу")
                 result = left / right
-            if not math.isfinite(result) or abs(result) > 1e100:
-                raise FormulaError("Формула вернула недопустимое числовое значение")
-            return result
+            return _finite_value(result)
         raise FormulaError("Неподдерживаемая операция")
 
     try:
         return evaluate(tree)
-    except OverflowError as exc:
+    except (OverflowError, ArithmeticError) as exc:
         raise FormulaError("Формула вернула недопустимое числовое значение") from exc

@@ -76,6 +76,19 @@ demo defaults. In demo mode, extraction returns no invented fields; enter and
 confirm the area manually before running a calculation. Uploaded files are
 limited by the configured per-file, total-size and file-count settings.
 
+## Calculation and proposal consistency
+
+Each saved calculation records its assumptions, service rows, formulas and a fingerprint of
+the persisted deal inputs. The calculation history remains available after documents,
+confirmed fields, service lines or catalog data change, but an outdated calculation cannot
+be exported as a current proposal. Recalculate and confirm the deal first. The proposal
+uses the contract term and line prices saved with that calculation.
+
+Document extraction stops with an explicit error when the configured text limit is exceeded;
+the pipeline records the omitted character count. Increase the limit or reduce the input
+set before retrying. Backend tests cover these behaviors; the frontend build checks types
+and compilation. Browser acceptance requires a running local app.
+
 ## Secret handling
 
 Never commit API keys. `.env` is ignored. Only placeholders belong in `.env.example`.

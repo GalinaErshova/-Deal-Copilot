@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.formula_engine import FormulaError, evaluate_formula, validate_formula
 from app.pricing import calculate
 from app.schemas import CalculationRequest
 
@@ -46,3 +47,35 @@ def test_configured_sensitivity_deltas_are_used():
     configuration = Settings(_env_file=None, sensitivity_deltas="-0.1,0,0.1")
     result = calculate(CalculationRequest(**configuration.calculation_defaults), configuration)
     assert [item["delta"] for item in result.sensitivity] == [-0.1, 0.0, 0.1]
+
+
+def test_sensitivity_reuses_custom_revenue_formula():
+    configuration = Settings(_env_file=None, sensitivity_deltas="-0.1,0,0.1")
+    req = CalculationRequest(**configuration.calculation_defaults)
+    result = calculate(req, configuration, {"revenue_with_vat": "area_m2 * service_price_per_m2_month * 2"})
+    assert result.sensitivity[1]["margin"] == pytest.approx(result.margin, abs=10 ** -configuration.margin_decimal_places)
+    assert result.sensitivity[0]["margin"] < result.sensitivity[1]["margin"] < result.sensitivity[2]["margin"]
+
+
+def test_sensitivity_scales_revenue_override_and_keeps_labor_override():
+    configuration = Settings(_env_file=None, sensitivity_deltas="-0.1,0,0.1")
+    req = CalculationRequest(**configuration.calculation_defaults)
+    revenue = req.area_m2 * req.service_price_per_m2_month * 2
+    result = calculate(req, configuration, labor_hours_override=40, revenue_with_vat_override=revenue)
+    assert result.labor_hours_month == 40
+    assert result.revenue_with_vat == round(revenue, configuration.currency_decimal_places)
+    assert result.sensitivity[1]["margin"] == pytest.approx(result.margin, abs=10 ** -configuration.margin_decimal_places)
+    assert result.sensitivity[0]["margin"] < result.sensitivity[1]["margin"] < result.sensitivity[2]["margin"]
+
+
+@pytest.mark.parametrize("expression", ["1e309", "-1e309", "1e101"])
+def test_nonfinite_or_oversized_constant_is_rejected(expression):
+    with pytest.raises(FormulaError):
+        validate_formula(expression, ())
+    with pytest.raises(FormulaError):
+        evaluate_formula(expression, (), {})
+
+
+def test_nonfinite_variable_is_rejected():
+    with pytest.raises(FormulaError):
+        evaluate_formula("value", ("value",), {"value": float("inf")})

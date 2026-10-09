@@ -3,11 +3,24 @@ from __future__ import annotations
 import math
 
 from .config import settings
-from .formula_engine import DEFAULT_FORMULAS, FORMULA_BY_KEY, evaluate_formula
+from .formula_engine import (
+    DEFAULT_FORMULAS,
+    FORMULA_BY_KEY,
+    FormulaError,
+    _finite_value,
+    evaluate_formula,
+)
 from .schemas import CalculationRequest, CalculationResult
 
 
-def calculate(req: CalculationRequest, configuration=settings, formula_expressions: dict[str, str] | None = None) -> CalculationResult:
+def calculate(
+    req: CalculationRequest,
+    configuration=settings,
+    formula_expressions: dict[str, str] | None = None,
+    *,
+    labor_hours_override: float | None = None,
+    revenue_with_vat_override: float | None = None,
+) -> CalculationResult:
     expressions = {**DEFAULT_FORMULAS, **(formula_expressions or {})}
     values = {
         "area_m2": req.area_m2,
@@ -26,28 +39,40 @@ def calculate(req: CalculationRequest, configuration=settings, formula_expressio
         "overhead_rate": req.overhead_rate,
         "target_margin": req.target_margin,
     }
-    formula = lambda key: evaluate_formula(expressions[key], FORMULA_BY_KEY[key].variables, values)
-    labor_hours_month = formula("labor_hours_month")
+    def calculate_values(price: float, revenue_override: float | None = None) -> dict[str, float]:
+        scenario = {**values, "service_price_per_m2_month": _finite_value(price)}
+
+        def formula(key: str) -> float:
+            return evaluate_formula(expressions[key], FORMULA_BY_KEY[key].variables, scenario)
+
+        scenario["labor_hours_month"] = (
+            formula("labor_hours_month") if labor_hours_override is None else _finite_value(labor_hours_override)
+        )
+        scenario["revenue_with_vat"] = (
+            formula("revenue_with_vat") if revenue_override is None else _finite_value(revenue_override)
+        )
+        for key in (
+            "revenue_net", "labor_cost", "materials_cost", "equipment_cost", "direct_cost",
+            "contingency_cost", "overhead_cost", "full_cost", "profit", "margin",
+            "break_even_price_per_m2", "target_price_per_m2",
+        ):
+            scenario[key] = formula(key)
+        return scenario
+
+    values = calculate_values(req.service_price_per_m2_month, revenue_with_vat_override)
+    labor_hours_month = values["labor_hours_month"]
+    if labor_hours_month < 0:
+        raise FormulaError("Трудозатраты не могут быть отрицательными")
     fte = labor_hours_month / req.monthly_hours_per_fte
+    _finite_value(fte)
     physical_staff = max(
         configuration.minimum_physical_staff,
         math.ceil(fte * req.replacement_coefficient),
     )
 
-    values["labor_hours_month"] = labor_hours_month
-    values["revenue_with_vat"] = formula("revenue_with_vat")
-    values["revenue_net"] = formula("revenue_net")
-    values["labor_cost"] = formula("labor_cost")
-    values["materials_cost"] = formula("materials_cost")
-    values["equipment_cost"] = formula("equipment_cost")
-    values["direct_cost"] = formula("direct_cost")
-    values["contingency_cost"] = formula("contingency_cost")
-    values["overhead_cost"] = formula("overhead_cost")
-    values["full_cost"] = formula("full_cost")
-    values["profit"] = formula("profit")
-    values["margin"] = formula("margin")
-    values["break_even_price_per_m2"] = formula("break_even_price_per_m2")
-    values["target_price_per_m2"] = formula("target_price_per_m2")
+    for key in ("revenue_with_vat", "revenue_net", "labor_cost", "materials_cost", "equipment_cost", "direct_cost", "contingency_cost", "overhead_cost", "full_cost"):
+        if values[key] < 0:
+            raise FormulaError(f"{key}: стоимость не может быть отрицательной")
 
     revenue_with_vat = values["revenue_with_vat"]
     revenue_net = values["revenue_net"]
@@ -73,28 +98,12 @@ def calculate(req: CalculationRequest, configuration=settings, formula_expressio
     sensitivity = []
     for delta in configuration.parsed_sensitivity_deltas:
         price = req.service_price_per_m2_month * (1 + delta)
-        net = evaluate_formula(expressions["revenue_net"], FORMULA_BY_KEY["revenue_net"].variables,
-                               {**values, "revenue_with_vat": req.area_m2 * price})
-        oh = evaluate_formula(expressions["overhead_cost"], FORMULA_BY_KEY["overhead_cost"].variables,
-                              {**values, "revenue_net": net})
-        scenario_values = {
-            **values,
-            "revenue_net": net,
-            "overhead_cost": oh,
-            "full_cost": evaluate_formula(
-                expressions["full_cost"],
-                FORMULA_BY_KEY["full_cost"].variables,
-                {**values, "overhead_cost": oh},
-            ),
-        }
-        p = evaluate_formula(
-            expressions["profit"],
-            FORMULA_BY_KEY["profit"].variables,
-            scenario_values,
+        scenario_revenue = (
+            None if revenue_with_vat_override is None
+            else revenue_with_vat_override * (1 + delta)
         )
-        sensitivity_margin = evaluate_formula(expressions["margin"], FORMULA_BY_KEY["margin"].variables,
-                                              {**scenario_values, "profit": p, "revenue_net": net})
-        sensitivity.append({"delta":delta,"price":price,"margin":sensitivity_margin})
+        scenario = calculate_values(price, scenario_revenue)
+        sensitivity.append({"delta": delta, "price": price, "margin": scenario["margin"]})
 
     return CalculationResult(
         labor_hours_month=round(labor_hours_month,configuration.labor_hours_decimal_places),

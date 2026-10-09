@@ -24,6 +24,7 @@ type PriceListDraft={name:string;area_type:string;work_type:string;price_per_m2_
 type ManualServiceDraft={address:string;area_type:string;work_type:string;area_m2:string;price_list_item_id:string;price_per_m2_month:string;productivity_m2_per_shift:string};
 type Calc={calculation_id:number;area_m2?:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
+type SavedCalculation={id:number;is_current:boolean;input:{confirmed?:boolean;assumptions?:CalculationForm;components?:Partial<AreaComponent>[]}&Partial<CalculationForm>;output:Calc&{aggregate?:Calc}};
 type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
 const fmt=(n:number,locale:string,digits:number)=>new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(n);
@@ -142,7 +143,7 @@ export default function Home(){
     }
     return r.json();
   }
-  async function refresh(){
+  async function refresh(restoreCalculation=false){
     if(!deal)return;
     const all=await Promise.all([
       req("/deals/"+deal.id+"/documents"),
@@ -153,18 +154,26 @@ export default function Home(){
       req("/deals/"+deal.id+"/organization-profile")
     ]);
     setDocs(all[0]);setFields(all[1]);setRuns(all[2]);
-    const latestCalculation=all[4]?.[0];
+    const latestCalculation:SavedCalculation|undefined=all[4]?.[0];
     if(latestCalculation){
       const output=latestCalculation.output;
       setCalc(output?.aggregate?{...output.aggregate,calculation_id:latestCalculation.id,components:output.components,total_area_m2:output.total_area_m2,physical_staff_by_site:output.physical_staff_by_site}:{...output,calculation_id:latestCalculation.id});
-      setCalculationConfirmed(Boolean(latestCalculation.input?.confirmed));setCalculationDirty(false);
-    }else setCalc(null);
+      setCalculationDirty(current=>current||!latestCalculation.is_current);
+      if(restoreCalculation){
+        setCalculationConfirmed(Boolean(latestCalculation.is_current&&latestCalculation.input?.confirmed));
+        if(latestCalculation.is_current){
+          const assumptions=latestCalculation.input.assumptions??latestCalculation.input;
+          setForm(current=>current?{...current,...assumptions}:current);
+        }
+      }
+    }else{setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false)}
     setAreaComponents((current:AreaComponent[])=>all[3].map((source:AreaComponent)=>{
       const previous=current.find(item=>item.id===source.id);
-      return {...source,area_m2:previous?.area_m2??source.area_m2,
-        productivity_m2_per_shift:previous?.productivity_m2_per_shift??source.productivity_m2_per_shift,
-        schedule_mode:previous?.schedule_mode??source.schedule_mode,
-        shifts_per_month:previous?.shifts_per_month??source.shifts_per_month};
+      const saved=restoreCalculation&&latestCalculation?.is_current?latestCalculation.input.components?.find(item=>item.id===source.id):undefined;
+      return {...source,area_m2:previous?.area_m2??saved?.area_m2??source.area_m2,
+        productivity_m2_per_shift:previous?.productivity_m2_per_shift??saved?.productivity_m2_per_shift??source.productivity_m2_per_shift,
+        schedule_mode:previous?.schedule_mode??saved?.schedule_mode??source.schedule_mode,
+        shifts_per_month:previous?.shifts_per_month??saved?.shifts_per_month??source.shifts_per_month};
     }));
     setOrganizationProfile(all[5]||{});
   }
@@ -182,7 +191,7 @@ export default function Home(){
   useEffect(()=>{req("/formulas").then(setFormulaSettings).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{req("/price-list").then(setPriceListItems).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{req("/demo-provider-tariffs").then(setDemoProviderTariffs).catch((e:any)=>setError(e.message))},[]);
-  useEffect(()=>{if(deal)refresh().catch(()=>{})},[deal?.id]);
+  useEffect(()=>{if(deal)refresh(true).catch(()=>{})},[deal?.id]);
   useEffect(()=>{
     const profileFields=["customer_name","customer_address","customer_inn","customer_kpp","customer_ogrn","customer_contact_person","customer_phone","customer_email"] as const;
     setProposalForm(current=>{
@@ -218,7 +227,9 @@ export default function Home(){
     try{
       const d=await req("/deals?title="+encodeURIComponent("Новая сделка"),{method:"POST"});
       window.localStorage.setItem("dealCopilot.activeDealId",String(d.id));
-      setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("upload");
+      setOrganizationProfile({});setProposalTouched(new Set());
+      setProposalForm(current=>({...current,customer_name:"",customer_address:"",customer_inn:"",customer_kpp:"",customer_ogrn:"",customer_contact_person:"",customer_phone:"",customer_email:""}));
+      setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setForm(appSettings?.calculation_defaults??null);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("upload");
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
   async function upload(files:FileList|null){
@@ -233,7 +244,7 @@ export default function Home(){
   }
   async function process(){
     if(!deal)return;
-    setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
+    setCalculationConfirmed(false);setCalculationDirty(true);
     setBusy(true);setError("");
     const previousRunId=Math.max(0,...runs.map(run=>run.id));
     let stopPolling=false;
@@ -305,7 +316,11 @@ export default function Home(){
       const numeric=Number(String(value).replace(",",".").replace(/[^0-9.\-]/g,""));
       if(Number.isFinite(numeric) && numeric>0) setForm(current=>current?({...current,area_m2:numeric}):current);
     }
-    setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
+    if(row.key==="contract_months"){
+      const months=Number(String(value).replace(",","."));
+      if(Number.isInteger(months)&&months>0)setForm(current=>current?({...current,contract_months:months}):current);
+    }
+    setCalculationConfirmed(false);setCalculationDirty(true);
     await refresh();
   }
   async function calculate(){
@@ -315,14 +330,14 @@ export default function Home(){
     setBusy(true);setError("");
     try{
       const path=areaComponents.length?"/calculate-breakdown":"/calculate";
-      const body=areaComponents.length?{confirmed:calculationConfirmed,assumptions:form,components:areaComponents.map(({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month,price_per_m2_month})=>({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month,price_per_m2_month}))}:form;
+      const body=areaComponents.length?{confirmed:calculationConfirmed,assumptions:form,components:areaComponents.map(({id,origin,price_list_item_id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month,price_per_m2_month})=>({id,area_m2,productivity_m2_per_shift,schedule_mode,shifts_per_month,...(origin!=="manual"&&price_list_item_id?{}:{price_per_m2_month})}))}:form;
       const result=await req("/deals/"+deal.id+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      setCalc(result);setCalculationDirty(false);setActive("economics");await refresh();
+      setCalc(result);setCalculationDirty(false);setActive("economics");await refresh(true);
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
   async function downloadProposal(){
-    if(!deal)return;
+    if(!deal||!calc||calculationDirty||!calculationConfirmed){setError("Подтвердите исходные данные и пересчитайте сделку перед скачиванием КП.");return;}
     setBusy(true);setError("");
     try{
       const response=await fetch(API+"/deals/"+deal.id+"/proposal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(proposalForm)});
@@ -336,7 +351,7 @@ export default function Home(){
   function updateAreaComponent(id:string,patch:Partial<AreaComponent>){
     setAreaComponents(current=>current.map(component=>component.id===id?({...component,...patch}):component));
     setCalculationConfirmed(false);
-    setCalc(null);setCalculationDirty(false);
+    setCalculationDirty(true);
   }
 
   function updateScheduleMode(id:string,mode:ScheduleMode){
@@ -350,7 +365,7 @@ export default function Home(){
     setForm(current=>current?({...current,[key]:value}):current);
     setError("");
     if(preserveConfirmation){setCalculationDirty(true);return;}
-    setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
+    setCalculationConfirmed(false);setCalculationDirty(true);
   }
 
   async function addManualArea(){
@@ -361,7 +376,7 @@ export default function Home(){
     try{
       await req("/deals/"+deal.id+"/fields/area",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:numeric})});
       setForm(current=>current?({...current,area_m2:numeric}):current);
-      setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);
+      setCalculationConfirmed(false);setCalculationDirty(true);
       setManualArea("");await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
@@ -382,7 +397,7 @@ export default function Home(){
           price_per_m2_month:Number.isFinite(price)&&price>0?price:null,
           productivity_m2_per_shift:Number.isFinite(productivity)&&productivity>0?productivity:null})});
       setManualServiceDraft({address:"",area_type:"Площадь объекта",work_type:"",area_m2:"",price_list_item_id:"",price_per_m2_month:"",productivity_m2_per_shift:""});
-      setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);await refresh();
+      setCalculationConfirmed(false);setCalculationDirty(true);await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
@@ -400,7 +415,7 @@ export default function Home(){
     setBusy(true);setError("");
     try{
       await req(`/deals/${deal.id}/area-components/manual/${line.manual_line_id}`,{method:"DELETE"});
-      setCalculationConfirmed(false);setCalc(null);setCalculationDirty(false);await refresh();
+      setCalculationConfirmed(false);setCalculationDirty(true);await refresh();
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
 
@@ -471,6 +486,7 @@ export default function Home(){
       const normalizedPatch={...patch,...(patch.name!==undefined?{name:patch.name.trim()}: {})};
       const saved=await req(`/price-list/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(normalizedPatch)});
       setPriceListItems(current=>current.map(item=>item.id===id?saved:item));
+      if(patch.price_per_m2_month!==undefined)setAreaComponents(current=>current.map(line=>line.origin!=="manual"&&line.price_list_item_id===id?({...line,price_per_m2_month:saved.price_per_m2_month}):line));
       if(patch.name!==undefined)setPriceListSavedId(id);
       if(calc&&["price_per_m2_month","productivity_m2_per_shift","work_type","area_type"].some(key=>key in patch))setCalculationDirty(true);
     }catch(e:any){setError(e.message);const items=await req("/price-list").catch(()=>null);if(items)setPriceListItems(items)}
@@ -502,7 +518,7 @@ export default function Home(){
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
   const confirmed=fields.filter(x=>x.confirmed).length;
   const areaField=fields.find(x=>x.key==="area_m2");
-  const proposalContractMonths=Number(fields.find(field=>field.key==="contract_months"&&field.confirmed)?.value)||form?.contract_months||1;
+  const proposalContractMonths=form?.contract_months||1;
   const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
     component.curation_status==="verified"&&component.schedule_status!=="needs_review"&&component.area_m2>0
     &&(component.productivity_m2_per_shift||0)>0
@@ -758,7 +774,8 @@ export default function Home(){
 
     {active==="proposal"&&<section className="panel proposalPanel">
       <div className="sectionHead"><div><h2>Коммерческое предложение</h2><p className="muted">Заполните реквизиты и скачайте редактируемый файл Word. В документ попадут подтверждённые требования и последний расчёт.</p></div></div>
-      {!calc?<div className="empty">Сначала завершите и подтвердите расчёт на вкладке «Трудоёмкость».</div>:<>
+       {!calc?<div className="empty">Сначала завершите и подтвердите расчёт на вкладке «Трудоёмкость».</div>:<>
+         {(calculationDirty||!calculationConfirmed)&&<p className="warning">Расчёт устарел или требует подтверждения. Проверьте данные и пересчитайте сделку перед скачиванием КП.</p>}
         <p className="muted">Реквизиты заказчика подставлены из тендерных документов, если найдены. Стрелка рядом с полем открывает подтверждающий фрагмент; значения можно исправить вручную.</p>
         <div className="proposalForm">
           <label>Заказчик {organizationSource("customer_name","название заказчика")}<input value={proposalForm.customer_name} onChange={e=>updateProposalField("customer_name",e.target.value)} placeholder="Название организации"/></label>
@@ -775,7 +792,7 @@ export default function Home(){
           <label className="proposalWide">Дополнительные условия<textarea rows={3} value={proposalForm.additional_terms} onChange={e=>updateProposalField("additional_terms",e.target.value)} placeholder="Условия оплаты, сроки начала работ и другие согласованные детали"/></label>
         </div>
         <div className="proposalPreview"><h3>Предварительный состав КП</h3><p><b>{proposalForm.customer_name||"[указать заказчика]"}</b> · {proposalForm.supplier_name||"[указать исполнителя]"}</p><p>{calc.components?.length||areaComponents.length} строк адресов и видов работ · {fmt(calc.total_area_m2||calc.components?.reduce((sum,item)=>sum+item.area_m2,0)||form?.area_m2||0,appSettings?.display_locale||"ru-RU",appSettings?.display_number_max_fraction_digits||1)} м²</p><p>Стоимость: {appSettings?money(calc.revenue_with_vat,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.revenue_with_vat} в месяц · срок {proposalContractMonths} мес.</p><p>За весь срок: {appSettings?money(calc.components?.length?calc.components.reduce((sum,item)=>sum+(item.contract_price||0),0):calc.revenue_with_vat*proposalContractMonths,appSettings.display_locale,appSettings.currency_code,appSettings.display_currency_max_fraction_digits):calc.components?.reduce((sum,item)=>sum+(item.contract_price||0),0)||calc.revenue_with_vat*proposalContractMonths}</p><p className="muted">Данные КП проверяются отдельно от внутренней экономики: маржа и себестоимость в файл не включаются.</p></div>
-        <button className="primary" disabled={busy} onClick={downloadProposal}>Скачать проект КП (.docx)</button>
+         <button className="primary" disabled={busy||calculationDirty||!calculationConfirmed} onClick={downloadProposal}>Скачать проект КП (.docx)</button>
       </>}
     </section>}
 

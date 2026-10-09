@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import math
@@ -28,8 +29,8 @@ from .model_gateway import gateway
 from .models import (
     Calculation,
     CalculationFormula,
-    DealComponentPriceSelection,
     Deal,
+    DealComponentPriceSelection,
     Document,
     ExtractedField,
     ManualServiceLine,
@@ -109,6 +110,42 @@ seed()
 def _saved_formula_expressions(db:Session)->dict[str,str]:
     return {row.key:row.expression for row in db.query(CalculationFormula).all()}
 
+def _calculation_source_fingerprint(db:Session, deal_id:int)->str:
+    """Hash persisted inputs that can change the meaning of a calculation."""
+    documents=db.query(Document).filter_by(deal_id=deal_id).order_by(Document.id).all()
+    fields=db.query(ExtractedField).filter_by(deal_id=deal_id).order_by(ExtractedField.id).all()
+    lines=db.query(ManualServiceLine).filter_by(deal_id=deal_id).order_by(ManualServiceLine.id).all()
+    selections=db.query(DealComponentPriceSelection).filter_by(deal_id=deal_id).order_by(
+        DealComponentPriceSelection.id).all()
+    prices=db.query(PriceListItem).order_by(PriceListItem.id).all()
+    rates=db.query(ReferenceRate).order_by(ReferenceRate.id).all()
+    source={
+        "documents":[(row.id,row.filename,row.parse_status,row.parse_json,row.extracted_text)
+                     for row in documents],
+        "fields":[(row.id,row.key,row.value,row.unit,row.status,row.confirmed,
+                   row.source_document_id,row.source_location,row.source_fragment) for row in fields],
+        "manual_lines":[(row.id,row.address,row.area_type,row.work_type,row.area_m2,
+                         row.schedule_mode,row.shifts_per_month,row.productivity_m2_per_shift,
+                         row.price_list_item_id,row.price_per_m2_month) for row in lines],
+        "selections":[(row.component_id,row.price_list_item_id) for row in selections],
+        "prices":[(row.id,row.name,row.area_type,row.work_type,row.price_per_m2_month,
+                   row.productivity_m2_per_shift,row.is_active) for row in prices],
+        "rates":[(row.id,row.category,row.name,row.unit,row.value) for row in rates],
+        "formulas":_saved_formula_expressions(db),
+        "calculation_settings":{
+            "hours_per_shift":settings.hours_per_shift,
+            "working_days_per_month":settings.working_days_per_month,
+            "working_days_per_week":settings.working_days_per_week,
+            "monthly_frequency_shifts":settings.monthly_frequency_shifts,
+            "minimum_physical_staff":settings.minimum_physical_staff,
+            "currency_decimal_places":settings.currency_decimal_places,
+            "labor_hours_decimal_places":settings.labor_hours_decimal_places,
+            "fte_decimal_places":settings.fte_decimal_places,
+            "sensitivity_deltas":settings.parsed_sensitivity_deltas,
+        },
+    }
+    return hashlib.sha256(json.dumps(source,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+
 def _formula_payload(db:Session)->list[dict]:
     saved=_saved_formula_expressions(db)
     return [{"key":item.key,"label":item.label,"description":item.description,
@@ -140,7 +177,12 @@ def update_calculation_formulas(payload:CalculationFormulaUpdate,db:Session=Depe
         for key,expression in submitted.items():
             definition=FORMULA_BY_KEY[key]
             normalized=validate_formula(expression,definition.variables)
-            evaluate_formula(normalized,definition.variables,sample)
+            trial=evaluate_formula(normalized,definition.variables,sample)
+            if key in {"labor_hours_month","line_labor_hours_month","revenue_with_vat",
+                       "revenue_net","labor_cost","materials_cost","equipment_cost",
+                       "direct_cost","contingency_cost","overhead_cost","full_cost",
+                       "line_monthly_price","contract_total_price"} and trial<0:
+                raise FormulaError(f"{key}: значение не может быть отрицательным")
     except FormulaError as exc:
         raise HTTPException(422,str(exc)) from exc
     existing={row.key:row for row in db.query(CalculationFormula).all()}
@@ -369,7 +411,17 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
     if not combined:
         run.status="failed"; run.finished_at=utc_now_naive(); db.commit()
         raise HTTPException(422,"Не удалось извлечь текст ни из одного документа")
-    prompt_text="\n\n".join(combined)[:settings.max_extraction_chars]
+    prompt_text="\n\n".join(combined)
+    if len(prompt_text)>settings.max_extraction_chars:
+        omitted=len(prompt_text)-settings.max_extraction_chars
+        run.status="failed";run.finished_at=utc_now_naive();db.commit()
+        add_step(db,run,"ai_extraction","failed",{"documents":len(docs)},
+                 {"error":"Лимит текста превышен","omitted_characters":omitted,
+                  "document_names":[doc.filename for doc in docs]},
+                 [f"Не обработано {omitted} символов; уменьшите набор документов или увеличьте лимит"])
+        raise HTTPException(413,
+            f"Общий текст документов превышает лимит на {omitted} символов. "
+            "Обработка остановлена: уменьшите набор документов или увеличьте лимит.")
     started=time.perf_counter()
     try:
         local_model = settings.llm_provider == "local" and not settings.is_demo_mode
@@ -696,7 +748,8 @@ def calculate_deal(deal_id:int,req:CalculationRequest,db:Session=Depends(get_db)
         result=calculate(req, settings, formula_expressions)
     except FormulaError as exc:
         raise HTTPException(422,str(exc)) from exc
-    result_payload={**result.model_dump(),"formulas_used":formula_expressions}
+    result_payload={**result.model_dump(),"formulas_used":formula_expressions,
+                    "source_fingerprint":_calculation_source_fingerprint(db,deal_id)}
     calc=Calculation(deal_id=deal_id,input_json=req.model_dump_json(),
                      output_json=json.dumps(result_payload,ensure_ascii=False),decision=result.decision)
     db.add(calc)
@@ -753,6 +806,16 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         raise HTTPException(409,"Куратор не смог подтвердить источник режима уборки; проверьте цитаты в документе")
     if not req.confirmed:
         raise HTTPException(409,"Подтвердите расчёт целиком после проверки исходных данных и предположений")
+    confirmed_term=db.query(ExtractedField).filter(
+        ExtractedField.deal_id==deal_id,ExtractedField.key=="contract_months",
+        ExtractedField.confirmed.is_(True)).order_by(ExtractedField.id).first()
+    if confirmed_term and confirmed_term.value:
+        try:
+            term=int(confirmed_term.value)
+        except (TypeError,ValueError) as exc:
+            raise HTTPException(409,"Подтверждённый срок договора указан некорректно") from exc
+        if term!=req.assumptions.contract_months:
+            raise HTTPException(409,"Срок расчёта отличается от подтверждённого срока договора")
 
     items_by_id={component.id:component for component in req.components}
     shifts_by_id: dict[str, float] = {}
@@ -777,8 +840,11 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
     for source in source_components:
         component_id=source["id"]
         item=items_by_id[component_id]
-        price_by_id[component_id]=(item.price_per_m2_month or source.get("price_per_m2_month")
-                                   or req.assumptions.service_price_per_m2_month)
+        if source.get("origin")!="manual" and source.get("price_list_item_id"):
+            price_by_id[component_id]=source["price_per_m2_month"]
+        else:
+            price_by_id[component_id]=(item.price_per_m2_month or source.get("price_per_m2_month")
+                                       or req.assumptions.service_price_per_m2_month)
     total_workload=sum(
         items_by_id[component["id"]].area_m2
         / items_by_id[component["id"]].productivity_m2_per_shift
@@ -789,6 +855,11 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         raise HTTPException(409,"Для расчёта нужна положительная площадь и производительность")
 
     line_results=[]
+    total_labor_hours=0.0
+    total_monthly_price=0.0
+    schedule_labels={"daily":"Каждый рабочий день","weekly":"Еженедельно",
+                     "monthly":"Ежемесячно","on_request":"По заявкам",
+                     "custom":"Другой режим","unspecified":"Не указан"}
     productivity_rates=db.query(ReferenceRate).filter(ReferenceRate.category=="productivity").all()
     formula_expressions=_saved_formula_expressions(db)
     for source in source_components:
@@ -796,7 +867,8 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         if source.get("origin")=="manual":
             line=manual_by_id[source["id"]]
             source.update({"area_type":line.area_type,"curation_status":"verified","curation_warnings":[],
-                           "schedule_mode":item.schedule_mode,"schedule_label":item.schedule_mode,
+                           "schedule_mode":item.schedule_mode,
+                           "schedule_label":schedule_labels.get(item.schedule_mode,item.schedule_mode),
                            "schedule_status":"verified","schedule_warnings":[],"schedule_additional_frequencies":[],
                            "work_type_source_document_id":None,"work_type_source_location":"","work_type_source_fragment":""})
         rate=_productivity_reference(source,productivity_rates)
@@ -810,16 +882,29 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         except FormulaError as exc:
             raise HTTPException(422,str(exc)) from exc
         fte=labor_hours/req.assumptions.monthly_hours_per_fte
-        line_monthly_price=evaluate_formula(
-            formula_expressions["line_monthly_price"],FORMULA_BY_KEY["line_monthly_price"].variables,
-            {"area_m2":item.area_m2,"service_price_per_m2_month":price_by_id[source["id"]]},
-        )
-        line_contract_price=evaluate_formula(
-            formula_expressions["contract_total_price"],FORMULA_BY_KEY["contract_total_price"].variables,
-            {"monthly_price":line_monthly_price,"contract_months":req.assumptions.contract_months},
-        )
+        try:
+            line_monthly_price=evaluate_formula(
+                formula_expressions["line_monthly_price"],FORMULA_BY_KEY["line_monthly_price"].variables,
+                {"area_m2":item.area_m2,"service_price_per_m2_month":price_by_id[source["id"]]},
+            )
+            line_contract_price=evaluate_formula(
+                formula_expressions["contract_total_price"],FORMULA_BY_KEY["contract_total_price"].variables,
+                {"monthly_price":line_monthly_price,"contract_months":req.assumptions.contract_months},
+            )
+        except FormulaError as exc:
+            raise HTTPException(422,str(exc)) from exc
+        if labor_hours<0 or line_monthly_price<0 or line_contract_price<0:
+            raise HTTPException(422,"Трудозатраты и цена строки не могут быть отрицательными")
+        total_labor_hours+=labor_hours
+        total_monthly_price+=round(line_monthly_price,settings.currency_decimal_places)
+        original_schedule=source.get("schedule_mode")
+        schedule_label=(source.get("schedule_label") if original_schedule==item.schedule_mode
+                        else schedule_labels.get(item.schedule_mode,item.schedule_mode))
         line_results.append({
             **source,
+            "original_schedule_label":source.get("schedule_label"),
+            "schedule_label":schedule_label,
+            "schedule_manually_changed":original_schedule!=item.schedule_mode,
             "area_m2":item.area_m2,
             "productivity_m2_per_shift":item.productivity_m2_per_shift,
             "price_per_m2_month":price_by_id[source["id"]],
@@ -834,20 +919,23 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
         })
 
     effective_productivity=total_area*settings.working_days_per_month/total_workload
-    effective_price=sum(items_by_id[key].area_m2*price for key,price in price_by_id.items())/total_area
+    effective_price=total_monthly_price/total_area
     calculation_request=req.assumptions.model_copy(update={
         "area_m2":total_area,
         "productivity_m2_per_shift":effective_productivity,
         "service_price_per_m2_month":effective_price,
     })
     try:
-        aggregate=calculate(calculation_request,settings,formula_expressions)
+        aggregate=calculate(calculation_request,settings,formula_expressions,
+                            labor_hours_override=total_labor_hours,
+                            revenue_with_vat_override=total_monthly_price)
     except FormulaError as exc:
         raise HTTPException(422,str(exc)) from exc
     output={
         "confirmed":req.confirmed,
         "components":line_results,
         "formulas_used":formula_expressions,
+        "source_fingerprint":_calculation_source_fingerprint(db,deal_id),
         "total_area_m2":round(total_area,settings.currency_decimal_places),
         "physical_staff_by_site":sum(item["physical_staff"] for item in line_results),
         "aggregate":aggregate.model_dump(),
@@ -864,8 +952,11 @@ def calculate_deal_breakdown(deal_id:int,req:CalculationBreakdownRequest,db:Sess
 @app.get("/api/deals/{deal_id}/calculations")
 def calculations(deal_id:int,db:Session=Depends(get_db)):
     rows=db.query(Calculation).filter(Calculation.deal_id==deal_id).order_by(Calculation.id.desc()).all()
+    current_fingerprint=_calculation_source_fingerprint(db,deal_id)
     return [{"id":r.id,"created_at":r.created_at,"decision":r.decision,
-             "input":json.loads(r.input_json),"output":json.loads(r.output_json)} for r in rows]
+              "input":json.loads(r.input_json),"output":json.loads(r.output_json),
+              "is_current":json.loads(r.output_json).get("source_fingerprint")==current_fingerprint}
+            for r in rows]
 
 @app.post("/api/deals/{deal_id}/proposal")
 def export_proposal(deal_id:int,req:ProposalExportRequest,db:Session=Depends(get_db)):
@@ -881,6 +972,10 @@ def export_proposal(deal_id:int,req:ProposalExportRequest,db:Session=Depends(get
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     output=json.loads(calculation.output_json)
+    if output.get("source_fingerprint")!=_calculation_source_fingerprint(db,deal_id):
+        raise HTTPException(409,"Исходные данные изменились. Выполните и подтвердите новый расчёт")
+    if output.get("components") and not output.get("confirmed"):
+        raise HTTPException(409,"Подтвердите актуальный расчёт перед выгрузкой КП")
     aggregate=output.get("aggregate",output)
     components=output.get("components",[])
     calculation_input=json.loads(calculation.input_json)
@@ -890,11 +985,14 @@ def export_proposal(deal_id:int,req:ProposalExportRequest,db:Session=Depends(get
     confirmed_fields=db.query(ExtractedField).filter(
         ExtractedField.deal_id==deal_id,ExtractedField.confirmed.is_(True)
     ).order_by(ExtractedField.id).all()
+    contract_months=int(assumptions.get("contract_months",1))
     confirmed_term=next((field.value for field in confirmed_fields if field.key=="contract_months" and field.value),None)
-    try:
-        contract_months=int(confirmed_term) if confirmed_term else int(assumptions.get("contract_months",1))
-    except (TypeError,ValueError):
-        contract_months=int(assumptions.get("contract_months",1))
+    if confirmed_term:
+        try:
+            if int(confirmed_term)!=contract_months:
+                raise HTTPException(409,"Подтверждённый срок отличается от сохранённого расчёта")
+        except (TypeError,ValueError) as exc:
+            raise HTTPException(409,"Подтверждённый срок договора указан некорректно") from exc
     doc=WordDocument()
     title=doc.add_heading("Коммерческое предложение",0)
     title.alignment=WD_ALIGN_PARAGRAPH.CENTER
