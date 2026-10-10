@@ -4,13 +4,15 @@ import hashlib
 import io
 import json
 import math
+import secrets
 import time
 import uuid
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
@@ -279,8 +281,43 @@ def _merge_extractions(extractions: list[DealExtraction]) -> DealExtraction:
     ]
     return DealExtraction(fields=fields, missing_fields=missing_fields, contradictions=contradictions)
 
+class ModelSelectionRequest(BaseModel):
+    """Принимает только код заранее настроенного профиля модели."""
+
+    profile_code: str
+
+
+def require_model_admin(x_model_admin_token: str = Header(default="")) -> None:
+    """Разрешает смену модели только владельцу серверного административного токена."""
+    if not settings.model_admin_token:
+        raise HTTPException(503, "Переключение модели не настроено")
+    if not secrets.compare_digest(x_model_admin_token, settings.model_admin_token):
+        raise HTTPException(403, "Недостаточно прав для смены модели")
+
+
+@app.get("/api/admin/model-profiles", dependencies=[Depends(require_model_admin)])
+def list_model_profiles(db: Session = Depends(get_db)):
+    """Возвращает разрешённые профили и текущий выбор без адресов и секретов."""
+    active = gateway.active_profile(db)
+    return {
+        "active": active.code,
+        "profiles": [vars(profile) for profile in gateway.profiles().values()],
+    }
+
+
+@app.put("/api/admin/model-profile", dependencies=[Depends(require_model_admin)])
+def update_model_profile(payload: ModelSelectionRequest, db: Session = Depends(get_db)):
+    """Меняет активный профиль для следующих запросов без перезапуска API."""
+    try:
+        profile = gateway.select_profile(db, payload.profile_code)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return vars(profile)
+
+
 @app.get("/api/settings")
-def public_settings():
+def public_settings(db: Session = Depends(get_db)):
+    active_model = gateway.active_profile(db)
     return {
         "calculation_defaults": settings.calculation_defaults,
         "working_days_per_month": settings.working_days_per_month,
@@ -288,8 +325,9 @@ def public_settings():
         "monthly_frequency_shifts": settings.monthly_frequency_shifts,
         "hours_per_shift": settings.hours_per_shift,
         "accepted_upload_extensions": settings.parsed_upload_extensions,
-        "demo_mode": settings.is_demo_mode,
-        "llm_provider": settings.llm_provider,
+        "demo_mode": active_model.provider == "mock",
+        "llm_provider": active_model.provider,
+        "llm_model": active_model.model,
         "display_locale": settings.display_locale,
         "currency_code": settings.currency_code,
         "currency_unit_symbol": settings.currency_unit_symbol,
@@ -318,8 +356,9 @@ def add_step(db: Session, run: PipelineRun, name: str, status: str,
     db.commit()
 
 @app.get("/api/health")
-def health():
-    return {"status":"ok","model":settings.llm_default_model,"demo_mode":settings.is_demo_mode}
+def health(db: Session = Depends(get_db)):
+    active_model = gateway.active_profile(db)
+    return {"status":"ok","model":active_model.model,"demo_mode":active_model.provider == "mock"}
 
 @app.post("/api/deals")
 def create_deal(title: str = "Новая сделка", db: Session = Depends(get_db)):
@@ -423,8 +462,10 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
             f"Общий текст документов превышает лимит на {omitted} символов. "
             "Обработка остановлена: уменьшите набор документов или увеличьте лимит.")
     started=time.perf_counter()
+    active_model = None
     try:
-        local_model = settings.llm_provider == "local" and not settings.is_demo_mode
+        active_model = gateway.active_profile(db)
+        local_model = active_model.provider in {"local", "ollama"}
         chunks = chunk_extraction_text(prompt_text, settings.llm_input_chunk_chars) if local_model else [prompt_text]
         partial_extractions = [
             gateway.structured(
@@ -432,6 +473,7 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
                 system=settings.extraction_system_prompt,
                 user=chunk,
                 schema=DealExtraction,
+                profile=active_model,
             )
             for chunk in chunks
         ]
@@ -439,7 +481,8 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
     except Exception as exc:
         run.status="failed"; run.finished_at=utc_now_naive(); db.commit()
         add_step(db,run,"ai_extraction","failed",{"documents":len(docs)},
-                 {"error":str(exc),"prompt_version":settings.extraction_prompt_version})
+                 {"error":str(exc),"prompt_version":settings.extraction_prompt_version,
+                  "model_profile":active_model.code if active_model else None})
         raise HTTPException(502,"Не удалось обработать документы моделью") from exc
     db.query(ExtractedField).filter(ExtractedField.deal_id==deal_id).delete()
     document_by_marker={f"{doc.id}:{doc.filename}":doc for doc in docs}
@@ -463,7 +506,8 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
                               source_location=field.source_location,source_fragment=field.source_fragment))
     db.commit()
     add_step(db,run,"ai_extraction","success",{"documents":len(docs), "chunks":len(chunks)},
-             {**extraction.model_dump(),"prompt_version":settings.extraction_prompt_version},
+             {**extraction.model_dump(),"prompt_version":settings.extraction_prompt_version,
+              "model_profile":active_model.code,"model":active_model.model},
              duration_ms=int((time.perf_counter()-started)*1000))
     run.status="success"; run.finished_at=utc_now_naive(); db.commit()
     return extraction

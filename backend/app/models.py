@@ -10,6 +10,15 @@ def utc_now_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+class RuntimeModelSelection(Base):
+    """Хранит активный профиль модели между запросами и перезапусками API."""
+
+    __tablename__ = "runtime_model_selection"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_code: Mapped[str] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+
+
 class Deal(Base):
     __tablename__ = "deals"
     id: Mapped[int] = mapped_column(primary_key=True)
