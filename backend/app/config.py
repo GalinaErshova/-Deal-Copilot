@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     mimo_base_url: str = "https://api.xiaomimimo.com/v1"
     mimo_api_key: str = ""
     demo_mode: bool = True
+    # Допустимые локальные модели задаются владельцем экземпляра, а не запросом браузера.
+    ollama_base_url: str = ""
+    ollama_models: str = ""
+    ollama_timeout_seconds: int = 120
+    model_admin_token: str = ""
 
     # Runtime and document-processing limits.
     cors_origins: str = "http://localhost:3000"
@@ -120,6 +125,7 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
             "max_spreadsheet_rows": self.max_spreadsheet_rows,
             "max_extraction_chars": self.max_extraction_chars,
             "llm_input_chunk_chars": self.llm_input_chunk_chars,
+            "ollama_timeout_seconds": self.ollama_timeout_seconds,
         }
         if any(value <= 0 for value in positive_values.values()):
             raise ValueError("Runtime limits and work schedule settings must be positive")
@@ -151,6 +157,14 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
             raise ValueError("Sensitivity deltas must be greater than -1")
         if self.llm_provider not in {"mimo", "local", "mock"}:
             raise ValueError("llm_provider must be one of the configured providers")
+        if self.parsed_ollama_models and not self.ollama_base_url:
+            raise ValueError("ollama_base_url is required when ollama_models are configured")
+        if self.ollama_base_url and not self.ollama_base_url.startswith(("http://", "https://")):
+            raise ValueError("ollama_base_url must be an HTTP URL")
+        if self.model_admin_token and len(self.model_admin_token) < 32:
+            raise ValueError("model_admin_token must contain at least 32 characters")
+        if any(len(name) > 180 for name in self.parsed_ollama_models):
+            raise ValueError("ollama model names must be at most 180 characters")
         try:
             mock_payload = json.loads(self.mock_extraction_payload)
         except json.JSONDecodeError as exc:
@@ -225,6 +239,11 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
     @property
     def parsed_mock_extraction(self) -> dict:
         return json.loads(self.mock_extraction_payload)
+
+    @property
+    def parsed_ollama_models(self) -> tuple[str, ...]:
+        """Возвращает разрешённые имена моделей Ollama без пустых и повторных значений."""
+        return tuple(dict.fromkeys(name.strip() for name in self.ollama_models.split(",") if name.strip()))
 
     @property
     def parsed_extraction_confidence_label_map(self) -> dict[str, float]:
