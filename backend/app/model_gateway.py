@@ -90,7 +90,7 @@ class ModelGateway:
     def profiles(self) -> dict[str, ModelProfile]:
         """Строит список разрешённых профилей только из настроек сервера."""
         available = {"mock": ModelProfile("mock", "mock", "mock")}
-        if settings.mimo_api_key:
+        if settings.llm_provider == "mimo" and settings.mimo_api_key:
             available["mimo:default"] = ModelProfile("mimo:default", "mimo", settings.llm_default_model)
             available["mimo:complex"] = ModelProfile("mimo:complex", "mimo", settings.llm_complex_model)
         if settings.llm_provider == "local" and settings.mimo_base_url:

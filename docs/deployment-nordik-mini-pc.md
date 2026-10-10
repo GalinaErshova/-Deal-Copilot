@@ -31,13 +31,16 @@
     UPLOAD_DIR=D:/DealCopilot/data/uploads
     LLM_PROVIDER=mock
     DEMO_MODE=true
+    MIMO_API_KEY=
     OLLAMA_BASE_URL=http://127.0.0.1:11434
     OLLAMA_MODELS=<ИМЯ_ИЗ_OLLAMA_LIST>,<ВТОРОЕ_ИМЯ_ПРИ_НАЛИЧИИ>
     OLLAMA_TIMEOUT_SECONDS=120
     MODEL_ADMIN_TOKEN=<СЛУЧАЙНЫЙ_СЕКРЕТ_НЕ_КОРОЧЕ_32_СИМВОЛОВ>
 
 Замените D:/DealCopilot/data на утверждённый постоянный каталог вне каталога релиза.
-Секрет храните только на mini-PC. Не помещайте его в Git, браузер, URL или журналы.
+На локальном экземпляре оставьте MIMO_API_KEY пустым: список выбора не должен
+содержать облачные профили. Секрет MODEL_ADMIN_TOKEN храните только на mini-PC.
+Не помещайте его в Git, браузер, URL или журналы.
 Перед запуском сохраните вместе файл SQLite и каталог загрузок. Новый релиз
 добавляет таблицу runtime_model_selection при первом запуске, не удаляя сделки.
 

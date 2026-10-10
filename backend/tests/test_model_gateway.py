@@ -60,6 +60,12 @@ def test_admin_switch_persists_and_does_not_expose_secrets(monkeypatch, tmp_path
         engine.dispose()
 
 
+def test_mock_instance_does_not_offer_cloud_profile_from_leftover_key(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "mock")
+    monkeypatch.setattr(settings, "mimo_api_key", "unused-cloud-key")
+    assert not any(code.startswith("mimo:") for code in ModelGateway().profiles())
+
+
 def test_ollama_provider_sends_schema_and_validates_result(monkeypatch):
     class Answer(BaseModel):
         value: int
