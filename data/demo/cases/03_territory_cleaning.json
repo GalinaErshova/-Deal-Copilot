@@ -1,0 +1,27 @@
+{
+  "id": "poisktenderov_32414075933",
+  "title": "Уборка прилегающей территории",
+  "source_url": "https://poisktenderov.ru/item/223/32414075933/",
+  "case_type": "territory_cleaning",
+  "complexity": "medium",
+  "expected_files": [
+    "НМЦК _МГТ расчет.xlsx",
+    "Обоснование цены_МГТ.docx",
+    "Проект_контракта_16445412-1.pdf",
+    "Техническое_задание_16445412-1.pdf"
+  ],
+  "demo_goals": [
+    "territory-specific requirements",
+    "seasonal/periodic work extraction",
+    "NMCK calculation parsing",
+    "contract requirement extraction"
+  ],
+  "expected_key_fields": [
+    "area_m2",
+    "schedule",
+    "seasonality",
+    "equipment",
+    "price_or_nmck"
+  ],
+  "notes": "Отдельный кейс наружной уборки."
+}
