@@ -1,0 +1,27 @@
+{
+  "id": "poisktenderov_0373200416626000002",
+  "title": "Уборка и содержание прилегающей территории",
+  "source_url": "https://poisktenderov.ru/item/0373200416626000002/",
+  "case_type": "territory_cleaning",
+  "complexity": "medium",
+  "expected_files": [
+    "Техническое задание.pdf",
+    "Проект контракта.pdf",
+    "Обоснование определения НМЦК(Д).pdf",
+    "Расчет НМЦК(Д).xlsx"
+  ],
+  "demo_goals": [
+    "modern 2026 tender",
+    "PDF plus XLSX ingestion",
+    "NMCK and contract traceability",
+    "risk extraction"
+  ],
+  "expected_key_fields": [
+    "area_m2",
+    "schedule",
+    "contract_months",
+    "payment_delay_days",
+    "price_or_nmck"
+  ],
+  "notes": "Современный 2026 кейс для регрессии на актуальной структуре закупки."
+}
