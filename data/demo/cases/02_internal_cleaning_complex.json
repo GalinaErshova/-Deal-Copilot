@@ -1,0 +1,32 @@
+{
+  "id": "tenderguru_94092336",
+  "title": "Уборка внутренних помещений, бюджет 2026-2027",
+  "source_url": "https://www.tenderguru.ru/tender/94092336",
+  "case_type": "internal_cleaning",
+  "complexity": "complex",
+  "expected_files": [
+    "Техническое_задание_17122412-1.pdf",
+    "Расчет Н(М)ЦК Общий.xlsx",
+    "Обоснование НМЦК (!).pdf",
+    "Проект_контракта_17123138-1.pdf",
+    "06.04.26. Клининг зданий с 01.07.2026 г. по 30.06.2027 г. ГБОУ Школа 1284.xlsx",
+    "Уборка внутренняя_ГБОУ Школа № 1621 (2).xlsx",
+    "Смета ГБОУ Школа №354 (апрель) (1).xlsx"
+  ],
+  "demo_goals": [
+    "multi-file merge",
+    "multiple XLSX tables",
+    "contract vs specification comparison",
+    "large-volume extraction",
+    "contradiction detection"
+  ],
+  "expected_key_fields": [
+    "area_m2",
+    "zones",
+    "schedule",
+    "contract_months",
+    "price_or_nmck",
+    "required_staff"
+  ],
+  "notes": "Тяжёлый regression-case после стабилизации baseline."
+}
