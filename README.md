@@ -1,5 +1,7 @@
 # Deal Copilot
 
+Развёртывание с NORDIK, SQLite и Ollama на mini-PC: [инструкция](docs/deployment-nordik-mini-pc.md).
+
 AI-assisted presale and tender decision system.
 
 **Core principle:** AI reads and structures documents; deterministic code calculates labor, cost, margin and BID/NO BID.
