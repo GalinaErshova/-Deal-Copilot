@@ -590,7 +590,8 @@ export default function Home(){
   const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
   const confirmed=fields.filter(x=>x.confirmed).length;
-  const needsExtraction=fields.length===0||docs.some(item=>item.status!=="parsed");
+  const hasExtractedRequirements=fields.some(item=>item.source_document_id!=null||["source_verified","source_unverified","needs_review"].includes(item.status));
+  const needsExtraction=!hasExtractedRequirements||docs.some(item=>item.status!=="parsed");
   const areaField=fields.find(x=>x.key==="area_m2");
   const proposalContractMonths=form?.contract_months||1;
   const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
@@ -697,7 +698,7 @@ export default function Home(){
       <div className="sectionHead">
         <div><h2>Сверка документов</h2><p className="muted">Предпросмотр документа слева, распознанные блоки справа; проверенные цитаты подсвечены.</p></div>
         <div className="sectionActions"><button type="button" onClick={()=>setDocumentsCollapsed(value=>!value)} aria-expanded={!documentsCollapsed}>{documentsCollapsed?"Показать документ":"Свернуть документ"}</button>
-        {!needsExtraction?<button type="button" className="primary" disabled={busy} onClick={()=>setActive("review")}>Далее →</button>
+        {!needsExtraction?<><button type="button" disabled={busy} onClick={process}>Повторить извлечение</button><button type="button" className="primary" disabled={busy} onClick={()=>setActive("review")}>Далее →</button></>
           :<button type="button" className="primary" disabled={!docs.length||busy} onClick={process}>Распознать и извлечь требования</button>}
         </div>
       </div>
