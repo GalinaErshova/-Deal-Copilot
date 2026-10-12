@@ -40,7 +40,8 @@ Ollama на mini-PC:11434. Браузер к NORDIK и mini-PC напряму�
   подключён к `dokploy-network`.
 - Прокси: `/opt/deal-copilot/proxy/default.conf`. Пароль на весь сайт, `/api/admin/` → 403,
   таймаут ответа API 900 с, размер загрузки до 50 МБ.
-- Логин и пароль сайта: `/opt/deal-copilot/secrets/web-basic-auth.txt` (права 600).
+- Логин и пароль сайта хранятся на NORDIK: `/opt/deal-copilot/secrets/web-basic-auth.txt`
+  (права 600). На gala-msk остаётся только хеш пароля в `/opt/deal-copilot/proxy/htpasswd`.
 - Порт прокси: `127.0.0.1:8095` и `10.66.66.3:8095`, наружу не открыт; снаружи сайт
   доступен только через Traefik по домену.
 
@@ -48,7 +49,7 @@ Ollama на mini-PC:11434. Браузер к NORDIK и mini-PC напряму�
 
 `https://deal-copilot.tools01.ru` — HTTPS через Traefik (Dokploy), сертификат Let's Encrypt.
 Маршрут: `/etc/dokploy/traefik/dynamic/deal-copilot.yml` (копия — `/opt/deal-copilot/proxy/`).
-Вход по логину и паролю из файла выше; учётная запись одна.
+Вход по логину и паролю из файла на NORDIK; учётная запись одна.
 
 Запасной путь без домена — SSH-туннель, затем `http://localhost:8095`:
 
