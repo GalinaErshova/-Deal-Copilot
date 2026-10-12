@@ -696,11 +696,33 @@ def delete_manual_service_line(deal_id:int,line_id:int,db:Session=Depends(get_db
 def update_field(field_id:int,payload:dict,db:Session=Depends(get_db)):
     row=db.get(ExtractedField,field_id)
     if not row: raise HTTPException(404,"Field not found")
-    if "value" in payload: row.value=str(payload["value"]) if payload["value"] is not None else None
-    row.confirmed=bool(payload.get("confirmed",True))
+    if "value" in payload:
+        row.value=str(payload["value"]) if payload["value"] is not None else None
+        for field in db.query(ExtractedField).filter(ExtractedField.deal_id==row.deal_id).all():
+            field.confirmed=False
+    row.confirmed=bool(payload.get("confirmed",False))
     row.status="user_changed" if "value" in payload else "user_confirmed"
     db.commit()
     return {"ok":True}
+
+@app.post("/api/deals/{deal_id}/fields/confirm")
+def confirm_deal_fields(deal_id:int,db:Session=Depends(get_db)):
+    """Подтверждает все требования сделки после проверки значений пользователем."""
+    if not db.get(Deal,deal_id): raise HTTPException(404,"Deal not found")
+    rows=db.query(ExtractedField).filter(ExtractedField.deal_id==deal_id).all()
+    if not rows or any(not str(row.value or "").strip() for row in rows):
+        raise HTTPException(409,"Проверьте и заполните требования перед подтверждением")
+    area=next((row for row in rows if row.key=="area_m2"),None)
+    try:
+        area_value=float(str(area.value).replace(",",".")) if area else 0
+    except ValueError:
+        area_value=0
+    if not math.isfinite(area_value) or area_value<=0:
+        raise HTTPException(409,"Укажите положительную площадь перед подтверждением")
+    for row in rows:
+        row.confirmed=True
+    db.commit()
+    return {"ok":True,"confirmed_count":len(rows)}
 
 @app.post("/api/deals/{deal_id}/fields/area")
 def create_manual_area_field(deal_id:int,payload:ManualAreaFieldRequest,db:Session=Depends(get_db)):
