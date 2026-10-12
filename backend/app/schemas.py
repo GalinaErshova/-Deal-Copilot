@@ -186,6 +186,17 @@ class DealComponentPriceSelectionUpdate(BaseModel):
     component_id: str = Field(min_length=1, max_length=500)
     price_list_item_id: int | None = Field(default=None, gt=0)
 
+class DealUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=250)
+
+    @field_validator("title")
+    @classmethod
+    def trim_title(cls, value: str) -> str:
+        title = value.strip()
+        if not title:
+            raise ValueError("Название сделки не может быть пустым")
+        return title
+
 class CalculationFormulaItem(BaseModel):
     key: str
     expression: str = Field(min_length=1, max_length=240)
