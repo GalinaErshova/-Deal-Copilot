@@ -27,6 +27,22 @@ Ollama на mini-PC:11434. Браузер к NORDIK и mini-PC напряму�
 - Модели в списке выбора: `qwen2.5:7b`, `qwen2.5:14b`, `llama3.1:8b`, `llama3.2:3b`,
   `sutyrin/saiga_mistral_7b:latest`. Активная — `ollama:qwen2.5:7b`.
 
+### Перед следующим выпуском на NORDIK
+
+Ветка `fix/model-review-findings` переименовала настройку списка моделей. В
+`/etc/deal-copilot/backend.env` до перезапуска службы нужно:
+
+- переименовать `OLLAMA_MODELS` в `DEAL_COPILOT_OLLAMA_MODELS`, значение не менять. Старое
+  имя приложение больше не читает: без переименования список моделей опустеет, активный
+  профиль `ollama:qwen2.5:7b` станет ненастроенным, `/api/health` ответит `degraded`,
+  а обработка документов — 409;
+- при желании добавить `OLLAMA_NUM_CTX=16384` — это значение по умолчанию, оно вмещает
+  фрагмент `LLM_INPUT_CHUNK_CHARS=12000`.
+
+```bash
+sed -i 's/^OLLAMA_MODELS=/DEAL_COPILOT_OLLAMA_MODELS=/' /etc/deal-copilot/backend.env
+```
+
 ## gala-msk — сайт
 
 - Релиз: `/opt/deal-copilot/releases/<commit>`, ссылка `/opt/deal-copilot/current`.
