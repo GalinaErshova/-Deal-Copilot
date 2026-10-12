@@ -25,7 +25,7 @@ def test_admin_switch_persists_and_does_not_expose_secrets(monkeypatch, tmp_path
     app.dependency_overrides[get_db] = test_db
     monkeypatch.setattr(settings, "model_admin_token", "a" * 40)
     monkeypatch.setattr(settings, "ollama_base_url", "http://127.0.0.1:11434")
-    monkeypatch.setattr(settings, "ollama_models", "qwen3:8b")
+    monkeypatch.setattr(settings, "deal_copilot_ollama_models", "qwen3:8b")
     client = TestClient(app)
     headers = {"X-Model-Admin-Token": "a" * 40}
     try:
@@ -91,3 +91,22 @@ def test_ollama_provider_sends_schema_and_validates_result(monkeypatch):
         {"role": "user", "content": "Document"},
     ]
     assert sent["payload"]["stream"] is False
+
+
+def test_mock_gateway_returns_valid_schema(monkeypatch):
+    from app.model_gateway import MockProvider
+    from app.schemas import DealExtraction
+
+    monkeypatch.setattr(settings, "mock_extraction_payload", json.dumps(
+        {"fields": [{"key": "area_m2", "label": "Площадь", "value": "1200"}]},
+    ))
+    provider = MockProvider()
+    result = provider.structured(
+        model="mock",
+        system="test",
+        user="test",
+        schema=DealExtraction,
+    )
+    assert isinstance(result, DealExtraction)
+    assert result.fields
+    assert all(field.key for field in result.fields)

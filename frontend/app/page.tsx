@@ -4,7 +4,7 @@ import {useEffect,useState,type ReactNode} from "react";
 
 const API=process.env.NEXT_PUBLIC_API_URL || "";
 
-type Deal={id:number;title:string;status:string;document_count?:number};
+type Deal={id:number;title:string;status:string;document_count?:number;processed_document_count?:number;created_at?:string};
 type Doc={id:number;filename:string;parser?:string;confidence?:string;status:string;warnings:string[]};
 type Field={id:number;key:string;label:string;value:string|null;unit?:string;confidence?:number;status:string;source_document_id?:number;source_location?:string;source_fragment?:string;confirmed:boolean};
 type Step={name:string;status:string;duration_ms?:number;input?:unknown;output?:unknown;warnings?:string[]};
@@ -25,10 +25,13 @@ type ManualServiceDraft={address:string;area_type:string;work_type:string;area_m
 type Calc={calculation_id:number;area_m2?:number;labor_hours_month:number;fte:number;physical_staff:number;physical_staff_by_site?:number;total_area_m2?:number;components?:AreaComponent[];revenue_with_vat:number;revenue_net:number;direct_cost:number;full_cost:number;profit:number;margin:number;break_even_price_per_m2:number;target_price_per_m2:number;decision:string;conditions:string[];sensitivity:{delta:number;price:number;margin:number}[]};
 type CalculationForm={area_m2:number;service_price_per_m2_month:number;productivity_m2_per_shift:number;monthly_hours_per_fte:number;hourly_staff_cost:number;replacement_coefficient:number;manager_monthly_cost:number;materials_per_m2_month:number;equipment_per_m2_month:number;logistics_monthly:number;overhead_rate:number;contingency_rate:number;target_margin:number;vat_rate:number;contract_months:number};
 type SavedCalculation={id:number;is_current:boolean;input:{confirmed?:boolean;assumptions?:CalculationForm;components?:Partial<AreaComponent>[]}&Partial<CalculationForm>;output:Calc&{aggregate?:Calc}};
-type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
+type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string|null;model_configured?:boolean;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
 const fmt=(n:number,locale:string,digits:number)=>new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(n);
 const money=(n:number,locale:string,currency:string,digits:number)=>new Intl.NumberFormat(locale,{style:"currency",currency,maximumFractionDigits:digits}).format(n);
+const visibleDealTitle=(deal:Deal,all:Deal[]=[])=>!deal.title||deal.title==="Новая сделка"||/\b(demo|демо|mvp)\b/i.test(deal.title)||all.filter(item=>item.title===deal.title).length>1?`Сделка #${deal.id}`:deal.title;
+const dealStageLabel=(deal:Deal)=>deal.status==="calculated"?"Расчёт готов":(deal.processed_document_count||0)>0?"Обработана":(deal.document_count||0)>0?"Документы загружены":"Черновик";
+const dealStartStage=(deal:Deal)=>deal.status==="calculated"?"economics":(deal.processed_document_count||0)>0?"review":(deal.document_count||0)>0?"documents":"upload";
 const shiftsForMode=(mode:ScheduleMode,settings:AppSettings|null):number|null=>{
   if(!settings)return null;
   if(mode==="daily")return settings.working_days_per_month;
@@ -97,6 +100,9 @@ function documentTable(rows:string[][]){
 
 export default function Home(){
   const [deal,setDeal]=useState<Deal|null>(null);
+  const [deals,setDeals]=useState<Deal[]>([]);
+  const [dealSearch,setDealSearch]=useState("");
+  const [dealNameDrafts,setDealNameDrafts]=useState<Record<number,string>>({});
   const [appSettings,setAppSettings]=useState<AppSettings|null>(null);
   const [docs,setDocs]=useState<Doc[]>([]);
   const [fields,setFields]=useState<Field[]>([]);
@@ -151,7 +157,8 @@ export default function Home(){
       req("/deals/"+deal.id+"/pipeline"),
       req("/deals/"+deal.id+"/area-components"),
       req("/deals/"+deal.id+"/calculations"),
-      req("/deals/"+deal.id+"/organization-profile")
+      req("/deals/"+deal.id+"/organization-profile"),
+      req("/deals")
     ]);
     setDocs(all[0]);setFields(all[1]);setRuns(all[2]);
     const latestCalculation:SavedCalculation|undefined=all[4]?.[0];
@@ -176,22 +183,25 @@ export default function Home(){
         shifts_per_month:previous?.shifts_per_month??saved?.shifts_per_month??source.shifts_per_month};
     }));
     setOrganizationProfile(all[5]||{});
+    setDeals(all[6]||[]);
+    setDeal(current=>current?(all[6]||[]).find((item:Deal)=>item.id===current.id)||current:current);
   }
   useEffect(()=>{
     Promise.all([req("/settings"),req("/deals")]).then(([s,deals]:[AppSettings,Deal[]])=>{
       setAppSettings(s);setForm(s.calculation_defaults);
+      setDeals(deals);
       const savedId=Number(window.localStorage.getItem("dealCopilot.activeDealId"));
-      const selected=deals.find(d=>d.id===savedId)||deals.find(d=>(d.document_count||0)>0)||deals[0];
+      const selected=deals.find(d=>d.id===savedId)||deals.find(d=>d.status==="calculated")||deals.find(d=>(d.processed_document_count||0)>0)||deals.find(d=>(d.document_count||0)>0)||deals[0];
       if(selected){
         window.localStorage.setItem("dealCopilot.activeDealId",String(selected.id));
-        setDeal(selected);setActive((selected.document_count||0)>0?"documents":"upload");
+        setDeal(selected);setActive(dealStartStage(selected));
       }
     }).catch((e:any)=>setError(e.message));
   },[]);
   useEffect(()=>{req("/formulas").then(setFormulaSettings).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{req("/price-list").then(setPriceListItems).catch((e:any)=>setError(e.message))},[]);
   useEffect(()=>{req("/demo-provider-tariffs").then(setDemoProviderTariffs).catch((e:any)=>setError(e.message))},[]);
-  useEffect(()=>{if(deal)refresh(true).catch(()=>{})},[deal?.id]);
+  useEffect(()=>{if(deal)refresh(true).catch((e:any)=>setError(e.message))},[deal?.id]);
   useEffect(()=>{
     const profileFields=["customer_name","customer_address","customer_inn","customer_kpp","customer_ogrn","customer_contact_person","customer_phone","customer_email"] as const;
     setProposalForm(current=>{
@@ -227,9 +237,49 @@ export default function Home(){
     try{
       const d=await req("/deals?title="+encodeURIComponent("Новая сделка"),{method:"POST"});
       window.localStorage.setItem("dealCopilot.activeDealId",String(d.id));
+      setDeals(current=>[d,...current.filter(item=>item.id!==d.id)]);
       setOrganizationProfile({});setProposalTouched(new Set());
       setProposalForm(current=>({...current,customer_name:"",customer_address:"",customer_inn:"",customer_kpp:"",customer_ogrn:"",customer_contact_person:"",customer_phone:"",customer_email:""}));
       setDeal(d);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setForm(appSettings?.calculation_defaults??null);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("upload");
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+  function returnToDeal(selected:Deal,force=false){
+    if((busy&&!force)||selected.id===deal?.id)return;
+    window.localStorage.setItem("dealCopilot.activeDealId",String(selected.id));
+    setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setSelectedDoc(null);setParsed(null);setHighlightPath(null);
+    setOrganizationProfile({});setProposalTouched(new Set());
+    setProposalForm(current=>({...current,customer_name:"",customer_address:"",customer_inn:"",customer_kpp:"",customer_ogrn:"",customer_contact_person:"",customer_phone:"",customer_email:""}));
+    setForm(appSettings?.calculation_defaults??null);setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setProcessProgress(null);setDocumentsCollapsed(false);
+    setActive(dealStartStage(selected));
+    setDeal(selected);
+  }
+  async function saveDealTitle(item:Deal){
+    const title=(dealNameDrafts[item.id]??item.title).trim();
+    if(!title){setError("Введите название сделки.");return}
+    if(title===item.title){setDealNameDrafts(current=>{const next={...current};delete next[item.id];return next});return}
+    setBusy(true);setError("");
+    try{
+      const saved=await req(`/deals/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title})});
+      setDeals(current=>current.map(dealItem=>dealItem.id===item.id?{...dealItem,...saved}:dealItem));
+      setDeal(current=>current?.id===item.id?{...current,...saved}:current);
+      setDealNameDrafts(current=>{const next={...current};delete next[item.id];return next});
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+  async function removeDeal(item:Deal){
+    if(!window.confirm(`Удалить сделку «${visibleDealTitle(item,deals)}» и связанные с ней документы, расчёты и файлы? Это действие нельзя отменить.`))return;
+    setBusy(true);setError("");
+    try{
+      await req(`/deals/${item.id}`,{method:"DELETE"});
+      const remaining=deals.filter(dealItem=>dealItem.id!==item.id);
+      setDeals(remaining);
+      setDealNameDrafts(current=>{const next={...current};delete next[item.id];return next});
+      if(deal?.id===item.id){
+        if(remaining[0])returnToDeal(remaining[0],true);
+        else{
+          window.localStorage.removeItem("dealCopilot.activeDealId");
+          setDeal(null);setDocs([]);setFields([]);setRuns([]);setAreaComponents([]);setSourceParsed({});setSelectedDoc(null);setParsed(null);setOrganizationProfile({});setCalc(null);setCalculationDirty(false);setCalculationConfirmed(false);setActive("deals");
+        }
+      }
     }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
   async function upload(files:FileList|null){
@@ -512,7 +562,7 @@ export default function Home(){
   ];
   const serviceTab={key:"pipeline",label:"Контроль обработки",title:"Контроль обработки",description:"Служебная информация о шагах распознавания и расчёта."};
   const formulaTab={key:"settings",label:"Настройки",title:"Настройки компании",description:"Прайс-лист услуг и формулы расчёта."};
-  const currentTab=tabs.find(tab=>tab.key===active)??(active==="pipeline"?serviceTab:active==="settings"?formulaTab:tabs[0]);
+  const currentTab=tabs.find(tab=>tab.key===active)??(active==="deals"?{key:"deals",title:"Сделки",description:"Откройте сохранённую сделку, измените её название или удалите запись."}:active==="pipeline"?serviceTab:active==="settings"?formulaTab:tabs[0]);
   const stageIndex=tabs.findIndex(tab=>tab.key===active);
   const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
@@ -527,6 +577,7 @@ export default function Home(){
   const calculationInputsReady=Boolean(form&&(areaComponents.length?areaBreakdownReady:areaField?.confirmed&&areaField.value));
   const criticalReady=Boolean(calculationInputsReady&&calculationConfirmed);
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
+  const visibleDeals=deals.filter(item=>!dealSearch.trim()||`${visibleDealTitle(item,deals)} ${item.id} ${item.title} ${dealStageLabel(item)}`.toLocaleLowerCase("ru-RU").includes(dealSearch.trim().toLocaleLowerCase("ru-RU")));
 
   return <div className={"appShell "+(sidebarCollapsed?"sidebarCollapsed":"")}>
     {!sidebarCollapsed&&<aside className="sidebar">
@@ -540,6 +591,15 @@ export default function Home(){
         <strong>{deal?(appSettings?.demo_mode&&deal.title&&deal.title!=="Новая сделка"?deal.title:"Сделка #"+deal.id):"Сделка не создана"}</strong>
         <span className={"dealStatus "+(deal?"online":"idle")}><i/> {deal?deal.status:"Создайте сделку, чтобы начать"}</span>
       </section>
+
+      <nav className="dealHistory" aria-label="История сделок">
+        <div className="dealHistoryHeading"><span className="sidebarLabel">ИСТОРИЯ СДЕЛОК</span><span>{visibleDeals.length}/{deals.length}</span></div>
+        {deals.length>0&&<input className="dealHistorySearch" aria-label="Поиск по сделкам" placeholder="Поиск по номеру или названию" value={dealSearch} onChange={event=>setDealSearch(event.target.value)}/>}
+        {visibleDeals.length?<div className="dealHistoryList">{visibleDeals.map(item=><button type="button" key={item.id} className={item.id===deal?.id?"dealHistoryItem selected":"dealHistoryItem"} aria-current={item.id===deal?.id?"page":undefined} title={visibleDealTitle(item,deals)} disabled={busy} onClick={()=>returnToDeal(item)}>
+          <b>{visibleDealTitle(item,deals)}</b>
+          <small>{item.processed_document_count||0}/{item.document_count||0} документов · {dealStageLabel(item)}{item.created_at?` · ${new Date(item.created_at).toLocaleDateString("ru-RU",{day:"2-digit",month:"short"})}`:""}</small>
+        </button>)}</div>:<p className="dealHistoryEmpty">{deals.length?"Сделки не найдены":"Пока нет сохранённых сделок"}</p>}
+      </nav>
 
       <section className="sidebarStats" aria-label="Сводка по сделке">
         <div><b>{docs.length}</b><span>документов</span></div>
@@ -564,8 +624,8 @@ export default function Home(){
       </nav>
 
       {!appSettings?.demo_mode&&<footer className="sidebarFooter">
-        <span className="modeDot live"/>
-        <span>{appSettings?.llm_provider==="local"?"MiMo · локально":"MiMo · API"}</span>
+        <span className={"modeDot "+(appSettings?.model_configured===false?"idle":"live")}/>
+        <span>{appSettings?.model_configured===false?"Модель не настроена":appSettings?.llm_provider==="local"?"MiMo · локально":"MiMo · API"}</span>
       </footer>}
       <button className="sidebarToggle" type="button" onClick={()=>setSidebarCollapsed(true)} aria-label="Скрыть левую панель" title="Скрыть левую панель">‹</button>
     </aside>}
@@ -573,11 +633,11 @@ export default function Home(){
     <main className="workspace">
       <header className="workspaceHeader">
         <div>
-          <p className="workspaceEyebrow">DEAL COPILOT <span>/</span> {deal?("СДЕЛКА #"+deal.id):"НОВЫЙ ПРОЕКТ"}</p>
+          <p className="workspaceEyebrow">DEAL COPILOT <span>/</span> {active==="deals"?"СПИСОК СДЕЛОК":deal?("СДЕЛКА #"+deal.id):"НОВЫЙ ПРОЕКТ"}</p>
           <h1>{currentTab.title}</h1>
           <p>{currentTab.description}</p>
         </div>
-        <div className="workspaceHeaderActions">{sidebarCollapsed&&<button type="button" className="sidebarRestore" onClick={()=>setSidebarCollapsed(false)} aria-label="Показать левую панель" title="Показать левую панель">☰</button>}{active!=="pipeline"&&<div className="workspaceStep"><span>ШАГ</span><b>{String(stageIndex+1).padStart(2,"0")}</b><i>/</i><span>{String(tabs.length).padStart(2,"0")}</span></div>}</div>
+        <div className="workspaceHeaderActions">{sidebarCollapsed&&<button type="button" className="sidebarRestore" onClick={()=>setSidebarCollapsed(false)} aria-label="Показать левую панель" title="Показать левую панель">☰</button>}<button type="button" className={active==="deals"?"headerDealList active":"headerDealList"} aria-current={active==="deals"?"page":undefined} onClick={()=>setActive("deals")}>Список сделок</button>{stageIndex>=0&&<div className="workspaceStep"><span>ШАГ</span><b>{String(stageIndex+1).padStart(2,"0")}</b><i>/</i><span>{String(tabs.length).padStart(2,"0")}</span></div>}</div>
       </header>
 
       {error&&<div className="error" role="alert">{error}</div>}
@@ -585,6 +645,15 @@ export default function Home(){
       {appSettings?.demo_mode&&<div className="demoNotice" role="note"><span className="noticeIcon" aria-hidden="true">i</span><span>Демонстрационный режим: модель не вызывается. Тарифы и нормы в примере условные; перед подготовкой реального КП замените их подтверждёнными данными.</span></div>}
 
       <div className="workspaceContent">
+    {active==="deals"&&<section className="panel dealManager">
+      <div className="sectionHead"><div><h2>Список сделок</h2><p className="muted">Откройте сделку, измените её название или удалите вместе с загруженными материалами.</p></div><button type="button" className="primary" disabled={busy} onClick={()=>void createDeal()}>Новая сделка</button></div>
+      <div className="dealManagerToolbar"><label>Поиск по названию или номеру<input value={dealSearch} onChange={event=>setDealSearch(event.target.value)} placeholder="Например, 7 или уборка"/></label><span>{visibleDeals.length} из {deals.length}</span></div>
+      {visibleDeals.length?<div className="dealManagerList">{visibleDeals.map(item=><article className={item.id===deal?.id?"dealManagerRow current":"dealManagerRow"} key={item.id}>
+        <div className="dealManagerInfo"><b>{visibleDealTitle(item,deals)}</b><small>№ {item.id} · {item.processed_document_count||0}/{item.document_count||0} документов обработано · {dealStageLabel(item)}{item.created_at?` · ${new Date(item.created_at).toLocaleDateString("ru-RU")}`:""}</small></div>
+        <label className="dealManagerName"><span>Название сделки</span><input aria-label={`Название сделки ${item.id}`} value={dealNameDrafts[item.id]??visibleDealTitle(item,deals)} onChange={event=>setDealNameDrafts(current=>({...current,[item.id]:event.target.value}))} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();void saveDealTitle(item)}}}/></label>
+        <div className="dealManagerActions"><button type="button" onClick={()=>returnToDeal(item)} disabled={busy||item.id===deal?.id}>Открыть</button><button type="button" onClick={()=>void saveDealTitle(item)} disabled={busy||(dealNameDrafts[item.id]??item.title).trim()===item.title}>Сохранить название</button><button type="button" className="dangerButton" onClick={()=>void removeDeal(item)} disabled={busy}>Удалить</button></div>
+      </article>)}</div>:<div className="empty">{deals.length?"По запросу ничего не найдено.":"Сделок пока нет. Создайте новую сделку, чтобы начать."}</div>}
+    </section>}
     {active==="upload"&&<section className="panel two">
       <div>
         <h2><span className="panelStep">01</span>Создать сделку</h2>
@@ -653,6 +722,7 @@ export default function Home(){
             {sourceArrow(f.source_document_id,f.source_location,`Открыть источник для поля «${f.label}»`,docs.find(doc=>doc.id===f.source_document_id)?.filename)}
             <button className={f.confirmed?"confirmed":""} onClick={()=>saveField(f,f.value||"")}>{f.confirmed?"✓ Подтверждено":"Подтвердить"}</button>
           </div>
+          {f.status==="needs_review"&&!f.confirmed&&<p className="warning">Модель вернула не число. Сверьте значение с цитатой и исправьте его перед подтверждением.</p>}
           <details><summary>Цитата в документе</summary><p className="sourceReference"><b>{f.source_document_id?<button type="button" className="sourceFileLink" onClick={()=>void openDoc(f.source_document_id!,f.source_location||undefined)}>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Открыть документ"}</button>:"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote></details>
         </div>)}
       </div>

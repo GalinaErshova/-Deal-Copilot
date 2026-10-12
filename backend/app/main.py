@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import Base, SessionLocal, engine, get_db
 from .document_processing import chunk_extraction_text, parse_document
+from .field_values import NEEDS_REVIEW_STATUS, normalize_field_value
 from .formula_engine import (
     DEFAULT_FORMULAS,
     FORMULA_BY_KEY,
@@ -27,7 +28,7 @@ from .formula_engine import (
     evaluate_formula,
     validate_formula,
 )
-from .model_gateway import gateway
+from .model_gateway import ModelProfile, gateway
 from .models import (
     Calculation,
     CalculationFormula,
@@ -50,6 +51,7 @@ from .schemas import (
     CalculationRequest,
     DealComponentPriceSelectionUpdate,
     DealExtraction,
+    DealUpdate,
     ManualAreaFieldRequest,
     ManualServiceLineRequest,
     ManualServiceLineUpdate,
@@ -298,9 +300,10 @@ def require_model_admin(x_model_admin_token: str = Header(default="")) -> None:
 @app.get("/api/admin/model-profiles", dependencies=[Depends(require_model_admin)])
 def list_model_profiles(db: Session = Depends(get_db)):
     """Возвращает разрешённые профили и текущий выбор без адресов и секретов."""
-    active = gateway.active_profile(db)
+    active = gateway.configured_active_profile(db)
     return {
-        "active": active.code,
+        "active": gateway.active_code(db),
+        "active_configured": active is not None,
         "profiles": [vars(profile) for profile in gateway.profiles().values()],
     }
 
@@ -317,7 +320,8 @@ def update_model_profile(payload: ModelSelectionRequest, db: Session = Depends(g
 
 @app.get("/api/settings")
 def public_settings(db: Session = Depends(get_db)):
-    active_model = gateway.active_profile(db)
+    # Убранный из настроек профиль не должен ронять интерфейс: ошибка будет при обработке.
+    active_model = gateway.configured_active_profile(db)
     return {
         "calculation_defaults": settings.calculation_defaults,
         "working_days_per_month": settings.working_days_per_month,
@@ -325,9 +329,7 @@ def public_settings(db: Session = Depends(get_db)):
         "monthly_frequency_shifts": settings.monthly_frequency_shifts,
         "hours_per_shift": settings.hours_per_shift,
         "accepted_upload_extensions": settings.parsed_upload_extensions,
-        "demo_mode": active_model.provider == "mock",
-        "llm_provider": active_model.provider,
-        "llm_model": active_model.model,
+        **_model_state(active_model),
         "display_locale": settings.display_locale,
         "currency_code": settings.currency_code,
         "currency_unit_symbol": settings.currency_unit_symbol,
@@ -346,6 +348,17 @@ def public_settings(db: Session = Depends(get_db)):
         "sensitivity_bar_scale": settings.sensitivity_bar_scale,
     }
 
+def _model_state(active_model: ModelProfile | None) -> dict:
+    """Описывает активную модель для интерфейса; None — профиль убран из настроек сервера."""
+    if active_model is None:
+        return {"demo_mode": False, "llm_provider": None, "llm_model": None, "model_configured": False}
+    return {
+        "demo_mode": active_model.provider == "mock",
+        "llm_provider": active_model.provider,
+        "llm_model": active_model.model,
+        "model_configured": True,
+    }
+
 def add_step(db: Session, run: PipelineRun, name: str, status: str,
              input_data=None, output_data=None, warnings=None, duration_ms=None):
     db.add(PipelineStep(run_id=run.id,name=name,status=status,
@@ -357,8 +370,10 @@ def add_step(db: Session, run: PipelineRun, name: str, status: str,
 
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)):
-    active_model = gateway.active_profile(db)
-    return {"status":"ok","model":active_model.model,"demo_mode":active_model.provider == "mock"}
+    active_model = gateway.configured_active_profile(db)
+    state = _model_state(active_model)
+    return {"status":"ok" if active_model else "degraded","model":state["llm_model"],
+            "demo_mode":state["demo_mode"],"model_configured":state["model_configured"]}
 
 @app.post("/api/deals")
 def create_deal(title: str = "Новая сделка", db: Session = Depends(get_db)):
@@ -376,9 +391,54 @@ def list_deals(db: Session = Depends(get_db)):
             "status": deal.status,
             "created_at": deal.created_at,
             "document_count": len(deal.documents),
+            "processed_document_count": sum(1 for document in deal.documents if document.parse_status == "parsed"),
         }
         for deal in deals
     ]
+
+@app.patch("/api/deals/{deal_id}")
+def update_deal(deal_id: int, payload: DealUpdate, db: Session = Depends(get_db)):
+    deal = db.get(Deal, deal_id)
+    if not deal:
+        raise HTTPException(404, "Сделка не найдена")
+    deal.title = payload.title
+    db.commit()
+    db.refresh(deal)
+    return {"id": deal.id, "title": deal.title, "status": deal.status}
+
+@app.delete("/api/deals/{deal_id}")
+def delete_deal(deal_id: int, db: Session = Depends(get_db)):
+    deal = db.get(Deal, deal_id)
+    if not deal:
+        raise HTTPException(404, "Сделка не найдена")
+
+    documents = db.query(Document).filter(Document.deal_id == deal_id).all()
+    upload_root = settings.resolve_path(settings.upload_dir).resolve()
+    stored_files = []
+    for document in documents:
+        path = settings.resolve_path(document.file_path).resolve()
+        if upload_root in path.parents:
+            stored_files.append(path)
+
+    run_ids = [row[0] for row in db.query(PipelineRun.id).filter(PipelineRun.deal_id == deal_id).all()]
+    if run_ids:
+        db.query(PipelineStep).filter(PipelineStep.run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(ExtractedField).filter(ExtractedField.deal_id == deal_id).delete(synchronize_session=False)
+    db.query(Calculation).filter(Calculation.deal_id == deal_id).delete(synchronize_session=False)
+    db.query(ManualServiceLine).filter(ManualServiceLine.deal_id == deal_id).delete(synchronize_session=False)
+    db.query(DealComponentPriceSelection).filter(DealComponentPriceSelection.deal_id == deal_id).delete(synchronize_session=False)
+    if run_ids:
+        db.query(PipelineRun).filter(PipelineRun.id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(Document).filter(Document.deal_id == deal_id).delete(synchronize_session=False)
+    db.delete(deal)
+    db.commit()
+
+    for path in stored_files:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return {"id": deal_id, "deleted": True}
 
 @app.post("/api/deals/{deal_id}/documents")
 async def upload_documents(deal_id: int, files: list[UploadFile] = File(...), db: Session = Depends(get_db)):
@@ -462,9 +522,16 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
             f"Общий текст документов превышает лимит на {omitted} символов. "
             "Обработка остановлена: уменьшите набор документов или увеличьте лимит.")
     started=time.perf_counter()
-    active_model = None
+    active_model = gateway.configured_active_profile(db)
+    if active_model is None:
+        profile_code = gateway.active_code(db)
+        run.status="failed"; run.finished_at=utc_now_naive(); db.commit()
+        add_step(db,run,"ai_extraction","failed",{"documents":len(docs)},
+                 {"error":"Активная модель не настроена","model_profile":profile_code})
+        raise HTTPException(409,
+            f"Активная модель {profile_code} убрана из настроек сервера. "
+            "Администратор должен выбрать другую модель.")
     try:
-        active_model = gateway.active_profile(db)
         local_model = active_model.provider in {"local", "ollama"}
         chunks = chunk_extraction_text(prompt_text, settings.llm_input_chunk_chars) if local_model else [prompt_text]
         partial_extractions = [
@@ -482,7 +549,7 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
         run.status="failed"; run.finished_at=utc_now_naive(); db.commit()
         add_step(db,run,"ai_extraction","failed",{"documents":len(docs)},
                  {"error":str(exc),"prompt_version":settings.extraction_prompt_version,
-                  "model_profile":active_model.code if active_model else None})
+                  "model_profile":active_model.code})
         raise HTTPException(502,"Не удалось обработать документы моделью") from exc
     db.query(ExtractedField).filter(ExtractedField.deal_id==deal_id).delete()
     document_by_marker={f"{doc.id}:{doc.filename}":doc for doc in docs}
@@ -499,8 +566,15 @@ def process_deal(deal_id: int, db: Session = Depends(get_db)):
                 parsed_by_document_id.get(source_doc.id, {"blocks": []}),
             )
         )
-        db.add(ExtractedField(deal_id=deal_id,key=field.key,label=field.label,value=field.value,
-                              unit=field.unit,status="source_verified" if source_verified else "source_unverified",
+        # Нечисловое значение числового поля («log(1200)») сохраняется как есть,
+        # но без подтверждения и с пометкой: расчёт его не примет, пока человек не исправит.
+        normalized = normalize_field_value(field.key, field.value)
+        if normalized.needs_review:
+            status = NEEDS_REVIEW_STATUS
+        else:
+            status = "source_verified" if source_verified else "source_unverified"
+        db.add(ExtractedField(deal_id=deal_id,key=field.key,label=field.label,value=normalized.value,
+                              unit=field.unit,status=status,confirmed=False,
                               confidence=field.confidence,
                               source_document_id=source_doc.id if source_doc else None,
                               source_location=field.source_location,source_fragment=field.source_fragment))
