@@ -157,11 +157,19 @@ button.dealHistoryItem.selected { color: var(--text); background: #112a3f; borde
 .progressLabel b { color: #80e2bb; font-variant-numeric: tabular-nums; }
 .progressTrack { height: 9px; overflow: hidden; background: #142b3e; border-radius: 999px; }
 .progressTrack span { display: block; height: 100%; background: linear-gradient(100deg, #4e9fd8, #70deb4, #4e9fd8); background-size: 200% 100%; border-radius: inherit; animation: progressGlow 2.2s linear infinite; transition: width .35s ease; }
+.progressTrack.indeterminate span { width: 32%; animation: progressSweep 1.8s ease-in-out infinite; }
+@keyframes progressSweep { from { transform: translateX(-100%); } to { transform: translateX(315%); } }
+.progressTiming { margin: 9px 0 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 @keyframes progressGlow { to { background-position: -200% 0; } }
 .docList { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
 .docList button { display: grid; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
 .docList small { margin-top: 4px; color: #88a3b8; }
 .docList button.selected { border-color: #71d9b1; }
+.docItem { display: flex; align-items: flex-start; max-width: 100%; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); }
+.docItem.selected { border-color: #3c6d5c; background: #e5eee9; }
+.docList .docOpen { border: 0; background: transparent; min-width: 0; }
+.docList .docDelete { margin: 5px 5px 0 0; padding: 2px 7px; border: 0; background: transparent; color: var(--muted); font-size: 20px; line-height: 1; }
+.docList .docDelete:hover { color: #a13b32; background: #fbecea; }
 .split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-height: 540px; }
 .split article { min-width: 0; padding: 14px; overflow: hidden; background: #071522; border: 1px solid #1a344c; border-radius: 12px; }
 .split article h3 { margin: 0 0 10px; font-size: 14px; }

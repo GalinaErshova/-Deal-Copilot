@@ -1,18 +1,28 @@
 import { test, expect } from "@playwright/test";
 import path from "path";
 
-test("полный сценарий: загрузка → извлечение → подтверждение → расчёт → решение", async ({ page }) => {
-  await page.goto("/");
+const fixture = { name: "demo.txt", mimeType: "text/plain", buffer: Buffer.from("Общая площадь объекта 1200 м²") };
 
-  await page.getByRole("button", { name: "Создать сделку", exact: true }).click();
+test("полный сценарий: загрузка → извлечение → подтверждение → расчёт → решение", async ({ page }) => {
+  await page.setViewportSize({width:1440,height:900});
+  await page.addInitScript(() => localStorage.removeItem("dealCopilot.activeDealId"));
+  await page.goto("/");
+  await page.waitForLoadState("networkidle");
+
+  await page.getByRole("button", { name: "Список сделок" }).click();
+  await page.getByRole("button", { name: "Новая сделка", exact: true }).click();
   await expect(page.getByText(/Сделка #/).first()).toBeVisible();
 
-  const fixture = path.resolve(process.cwd(), "tests/fixtures/demo.xlsx");
-  await page.locator('input[type="file"]').setInputFiles(fixture);
+  await page.locator('input[type="file"]').setInputFiles(path.resolve(process.cwd(), "tests/fixtures/demo.xlsx"));
 
   await expect(page.getByRole("heading", { name: "Сверка документов" })).toBeVisible();
   await page.getByRole("button", { name: "Распознать и извлечь требования" }).click();
 
+  await expect(page.getByRole("button", { name: "Свернуть документ" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Повторить извлечение" })).toBeVisible();
+  page.once("dialog", dialog => { expect(dialog.message()).toContain("вручную добавленные требования"); return dialog.dismiss(); });
+  await page.getByRole("button", { name: "Повторить извлечение" }).click();
+  await page.locator(".sectionActions").getByRole("button", { name: "Далее →" }).click();
   await expect(page.getByRole("heading", { name: "Карточка требований" })).toBeVisible();
   const areaCard = page.locator(".field").filter({ hasText: "Площадь" }).first();
   await areaCard.getByRole("button", { name: "Подтвердить" }).click();
@@ -30,4 +40,21 @@ test("полный сценарий: загрузка → извлечение �
   await page.getByRole("button", { name: /Контроль обработки/ }).click();
   await expect(page.getByRole("heading", { name: "Пошаговый контроль обработки" })).toBeVisible();
   await expect(page.getByText(/deterministic_calculation/).first()).toBeVisible();
+});
+
+test("на шаге документов можно удалить ошибочную загрузку", async ({ page }) => {
+  await page.setViewportSize({width:390,height:844});
+  await page.addInitScript(() => localStorage.removeItem("dealCopilot.activeDealId"));
+  await page.goto("/");
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "Список сделок" }).click();
+  await page.getByRole("button", { name: "Новая сделка", exact: true }).click();
+  await page.locator('input[type="file"]').setInputFiles(fixture);
+
+  await expect(page.getByRole("button", { name: "Распознать и извлечь требования" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Переход между этапами" }).getByRole("button", { name: "Далее →" })).toBeDisabled();
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Удалить документ demo.txt" }).click();
+  await expect(page.getByRole("button", { name: "Удалить документ demo.txt" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Распознать и извлечь требования" })).toBeDisabled();
 });

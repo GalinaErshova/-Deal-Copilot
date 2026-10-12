@@ -13,7 +13,7 @@ type ParsedBlock={kind:string;text:string;path:string;page_no?:number;title?:str
 type ParsedDocument={parser:string;blocks:ParsedBlock[];warnings?:string[]};
 type OrganizationSource={value:string;document_id:number;document_name:string;source_location:string;source_fragment:string};
 type OrganizationProfile=Record<string,OrganizationSource>;
-type ProcessProgress={value:number;label:string};
+type ProcessProgress={value:number|null;label:string};
 type ScheduleMode="daily"|"weekly"|"monthly"|"on_request"|"custom"|"unspecified";
 type AreaComponent={id:string;origin?:"document"|"manual";manual_line_id?:number;price_list_item_id?:number|null;company_service_name?:string|null;price_per_m2_month?:number|null;address:string;area_type:string;work_type:string;work_type_source_document_id:number|null;work_type_source_location:string;work_type_source_fragment:string;area_m2:number;source_document_id:number|null;source_document_name:string;source_location:string;source_fragment:string;schedule_mode:ScheduleMode;schedule_label:string;schedule_status:string;schedule_warnings:string[];schedule_source_document_id:number|null;schedule_source_document_name:string|null;schedule_source_location:string;schedule_source_fragment:string;schedule_additional_frequencies?:string[];curation_status?:string;curation_warnings?:string[];productivity_m2_per_shift:number|null;productivity_reference?:{id:number;name:string;unit:string;value:number;notes:string|null}|null;shifts_per_month:number|null;monthly_price?:number;contract_price?:number;labor_hours_month?:number;fte?:number;physical_staff?:number};
 type FormulaSetting={key:string;label:string;description:string;expression:string;default_expression:string;variables:string[]};
@@ -139,6 +139,7 @@ export default function Home(){
   const [sourceParsed,setSourceParsed]=useState<Record<number,ParsedDocument>>({});
   const [highlightPath,setHighlightPath]=useState<string|null>(null);
   const [processProgress,setProcessProgress]=useState<ProcessProgress|null>(null);
+  const [processElapsed,setProcessElapsed]=useState(0);
   const [calc,setCalc]=useState<Calc|null>(null);
   const [calculationDirty,setCalculationDirty]=useState(false);
   const [calculationConfirmed,setCalculationConfirmed]=useState(false);
@@ -299,12 +300,27 @@ export default function Home(){
       await refresh();setActive("documents");
     }catch(e:any){setError(e.message);await refresh().catch(()=>{})}finally{setBusy(false)}
   }
+  async function removeDocument(item:Doc){
+    if(!deal||!window.confirm(`Удалить документ «${item.filename}» из сделки? Связанные с ним извлечённые данные будут удалены.`))return;
+    setBusy(true);setError("");
+    try{
+      await req(`/deals/${deal.id}/documents/${item.id}`,{method:"DELETE"});
+      if(selectedDoc===item.id){setSelectedDoc(null);setParsed(null);setHighlightPath(null)}
+      setSourceParsed(current=>{const next={...current};delete next[item.id];return next});
+      setCalculationConfirmed(false);setCalculationDirty(true);
+      await refresh();
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
   async function process(){
     if(!deal)return;
+    if(fields.length>0&&!window.confirm("Повторное извлечение удалит извлечённые и вручную добавленные требования этой сделки, а также их подтверждения и правки. Продолжить?"))return;
     setCalculationConfirmed(false);setCalculationDirty(true);
     setBusy(true);setError("");
     const previousRunId=Math.max(0,...runs.map(run=>run.id));
     let stopPolling=false;
+    const startedAt=Date.now();
+    setProcessElapsed(0);
+    const elapsedTimer=window.setInterval(()=>setProcessElapsed(Math.floor((Date.now()-startedAt)/1000)),1000);
     setProcessProgress({value:4,label:"Подключаем обработку документов…"});
     const progressPolling=(async()=>{
       while(!stopPolling){
@@ -324,7 +340,7 @@ export default function Home(){
               setProcessProgress({value:Math.max(8,8+parseProgress),label:"Обработка завершилась с ошибкой"});return;
             }
             if(finished>=docs.length){
-              setProcessProgress({value:88,label:"Документы разобраны. Модель извлекает требования…"});
+              setProcessProgress({value:null,label:"Документы разобраны. Ожидаем ответ локальной модели…"});
             }else{
               setProcessProgress({value:Math.max(8,8+parseProgress),label:`Разобрано документов: ${parsedCount} из ${docs.length}`});
             }
@@ -337,13 +353,14 @@ export default function Home(){
       await req("/deals/"+deal.id+"/process",{method:"POST"});
       stopPolling=true;await progressPolling;
       setProcessProgress({value:100,label:"Требования извлечены"});
-      await refresh();setActive("review");
-    }catch(e:any){stopPolling=true;await progressPolling;setProcessProgress(null);setError(e.message);await refresh().catch(()=>{});setActive("documents")}finally{stopPolling=true;setBusy(false);window.setTimeout(()=>setProcessProgress(null),1200)}
+      await refresh();setActive("documents");
+    }catch(e:any){stopPolling=true;await progressPolling;setProcessProgress(null);setError(e.message);await refresh().catch(()=>{});setActive("documents")}finally{stopPolling=true;window.clearInterval(elapsedTimer);setBusy(false);window.setTimeout(()=>setProcessProgress(null),1200)}
   }
   async function openDoc(id:number,path?:string){
     setSelectedDoc(id);
     setHighlightPath(path||null);
-    setParsed(await req("/documents/"+id+"/parsed"));
+    setParsed(null);
+    try{setParsed(await req("/documents/"+id+"/parsed"))}catch{setParsed(null)}
     setActive("documents");
     if(path){
       setTimeout(()=>{
@@ -574,6 +591,8 @@ export default function Home(){
   const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
   const confirmed=fields.filter(x=>x.confirmed).length;
+  const hasExtractedRequirements=fields.some(item=>item.source_document_id!=null||["source_verified","source_unverified","needs_review"].includes(item.status));
+  const needsExtraction=!hasExtractedRequirements||docs.some(item=>item.status!=="parsed");
   const areaField=fields.find(x=>x.key==="area_m2");
   const proposalContractMonths=form?.contract_months||1;
   const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
@@ -679,18 +698,23 @@ export default function Home(){
     {active==="documents"&&<section className="panel">
       <div className="sectionHead">
         <div><h2>Сверка документов</h2><p className="muted">Предпросмотр документа слева, распознанные блоки справа; проверенные цитаты подсвечены.</p></div>
-        <div className="sectionActions"><button type="button" onClick={()=>setDocumentsCollapsed(value=>!value)} aria-expanded={!documentsCollapsed}>{documentsCollapsed?"Показать детали":"Свернуть детали"}</button>
-        <button disabled={!docs.length||busy} onClick={process}>Распознать и извлечь требования</button>
+        <div className="sectionActions"><button type="button" onClick={()=>setDocumentsCollapsed(value=>!value)} aria-expanded={!documentsCollapsed}>{documentsCollapsed?"Показать документ":"Свернуть документ"}</button>
+        {!needsExtraction?<><button type="button" disabled={busy} onClick={process}>Повторить извлечение</button><button type="button" className="primary" disabled={busy} onClick={()=>setActive("review")}>Далее →</button></>
+          :<button type="button" className="primary" disabled={!docs.length||busy} onClick={process}>Распознать и извлечь требования</button>}
         </div>
       </div>
       {processProgress&&<div className="processingProgress" role="status" aria-live="polite">
-        <div className="progressLabel"><span>{processProgress.label}</span><b>{processProgress.value}%</b></div>
-        <div className="progressTrack" role="progressbar" aria-label="Ход обработки документов" aria-valuemin={0} aria-valuemax={100} aria-valuenow={processProgress.value} aria-valuetext={processProgress.label}>
-          <span style={{width:`${processProgress.value}%`}}/>
+        <div className="progressLabel"><span>{processProgress.label}</span><b>{processProgress.value===null?"В работе":`${processProgress.value}%`}</b></div>
+        <div className={processProgress.value===null?"progressTrack indeterminate":"progressTrack"} role="progressbar" aria-label="Ход обработки документов" aria-valuemin={0} aria-valuemax={100} aria-valuenow={processProgress.value??undefined} aria-valuetext={processProgress.label}>
+          <span style={processProgress.value===null?undefined:{width:`${processProgress.value}%`}}/>
         </div>
+        {busy&&<p className="progressTiming">Прошло {Math.floor(processElapsed/60)} мин {String(processElapsed%60).padStart(2,"0")} сек. {processProgress.value===null&&processElapsed>=120?"Ответ модели задерживается. Если обработка завершится ошибкой, причина появится ниже.":""}</p>}
       </div>}
       <div className="docList">
-        {docs.map(d=><button key={d.id} onClick={()=>openDoc(d.id)} className={selectedDoc===d.id?"selected":""}><span>{d.filename}</span><small>{(d.parser||"—")+" · "+(d.confidence||"—")+" · "+d.status}</small></button>)}
+        {docs.map(d=><div className={selectedDoc===d.id?"docItem selected":"docItem"} key={d.id}>
+          <button type="button" className="docOpen" onClick={()=>void openDoc(d.id)}><span>{d.filename}</span><small>{(d.parser||"—")+" · "+(d.confidence||"—")+" · "+d.status}</small></button>
+          <button type="button" className="docDelete" aria-label={`Удалить документ ${d.filename}`} title="Удалить документ" disabled={busy} onClick={()=>void removeDocument(d)}>×</button>
+        </div>)}
       </div>
       {selectedDoc&&!documentsCollapsed&&<div className="split">
         <article><h3>Документ</h3><a className="downloadOriginal" href={API+"/documents/"+selectedDoc+"/original"} download={docs.find(d=>d.id===selectedDoc)?.filename}>Скачать исходный файл ↗</a>
@@ -953,7 +977,7 @@ export default function Home(){
         {active!=="pipeline"&&active!=="settings"&&<nav className="stageNav" aria-label="Переход между этапами">
           <button type="button" onClick={()=>moveStage(-1)} disabled={stageIndex<=0}>← Назад</button>
           <span>Этап {stageIndex+1} из {tabs.length}</span>
-          <button type="button" className="primary" onClick={()=>moveStage(1)} disabled={stageIndex>=tabs.length-1}>Далее →</button>
+          <button type="button" className="primary" onClick={()=>moveStage(1)} disabled={stageIndex>=tabs.length-1||busy||(active==="documents"&&needsExtraction)}>Далее →</button>
         </nav>}
       </div>
       {productivityHelp&&<div className="modalBackdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setProductivityHelp(null)}}>

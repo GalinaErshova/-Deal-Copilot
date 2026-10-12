@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -478,6 +478,38 @@ async def upload_documents(deal_id: int, files: list[UploadFile] = File(...), db
     add_step(db,run,"upload","success",{"files":[x["filename"] for x in accepted]},{"accepted":accepted})
     run.status="success"; run.finished_at=utc_now_naive(); db.commit()
     return {"run_id":run.id,"documents":accepted}
+
+@app.delete("/api/deals/{deal_id}/documents/{document_id}")
+def delete_document(deal_id: int, document_id: int, db: Session = Depends(get_db)):
+    """Удаляет документ сделки, связанные извлечённые поля и его файл в каталоге загрузок."""
+    document = db.query(Document).filter_by(id=document_id, deal_id=deal_id).one_or_none()
+    if document is None:
+        raise HTTPException(404, "Документ не найден в сделке")
+
+    upload_root = settings.resolve_path(settings.upload_dir).resolve()
+    stored_path = settings.resolve_path(document.file_path).resolve()
+    if upload_root not in stored_path.parents:
+        raise HTTPException(409, "Файл документа находится вне каталога загрузок")
+
+    # Поля без источника, созданные моделью в общей обработке, тоже могут
+    # зависеть от удаляемого файла. Введённые вручную поля сохраняем.
+    db.query(ExtractedField).filter(
+        ExtractedField.deal_id == deal_id,
+        or_(
+            ExtractedField.source_document_id == document_id,
+            ExtractedField.status.in_(("source_verified", "source_unverified", NEEDS_REVIEW_STATUS)),
+        ),
+    ).delete(synchronize_session=False)
+    db.delete(document)
+    deal = db.get(Deal, deal_id)
+    if deal is not None:
+        deal.status = "draft"
+    db.commit()
+    try:
+        stored_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return {"id": document_id, "deleted": True}
 
 @app.post("/api/deals/{deal_id}/process")
 def process_deal(deal_id: int, db: Session = Depends(get_db)):
