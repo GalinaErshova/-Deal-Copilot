@@ -1,8 +1,22 @@
+import json
+
 from fastapi.testclient import TestClient
+
+from app.config import settings
 from app.main import app
 from app.schemas import CalculationRequest
 
 client = TestClient(app)
+
+
+def confirm_area(deal_id: int, area: float) -> None:
+    """Расчёт допускается только после подтверждения площади, как в интерфейсе."""
+    created = client.post(f"/api/deals/{deal_id}/fields/area", json={"value": area})
+    assert created.status_code == 200
+    confirmed = client.patch(
+        f"/api/fields/{created.json()['id']}", json={"value": area, "confirmed": True},
+    )
+    assert confirmed.status_code == 200
 
 def test_health():
     r = client.get("/api/health")
@@ -15,6 +29,7 @@ def test_create_deal_and_calculate():
     r = client.post("/api/deals", params={"title": "Integration test"})
     assert r.status_code == 200
     deal_id = r.json()["id"]
+    confirm_area(deal_id, 1200)
 
     calc = client.post(
         f"/api/deals/{deal_id}/calculate",
@@ -51,8 +66,9 @@ def test_create_deal_and_calculate():
         for run in runs
     )
 
-def test_upload_process_review_calculate_xlsx():
+def test_upload_process_review_calculate_xlsx(monkeypatch):
     from io import BytesIO
+
     from openpyxl import Workbook
 
     deal = client.post("/api/deals", params={"title": "E2E API fixture"}).json()
@@ -81,6 +97,15 @@ def test_upload_process_review_calculate_xlsx():
     assert upload.status_code == 200
     assert upload.json()["documents"][0]["filename"] == "requirements.xlsx"
 
+    # Заглушка модели по умолчанию пуста; задаём ответ, который вернула бы модель.
+    monkeypatch.setattr(settings, "mock_extraction_payload", json.dumps({
+        "fields": [{
+            "key": "area_m2", "label": "Площадь", "value": "1200", "unit": "м²",
+            "source_fragment": "Общая площадь объекта 1200 м²", "confidence": 0.9,
+        }],
+        "missing_fields": [],
+        "contradictions": [],
+    }, ensure_ascii=False))
     processed = client.post(f"/api/deals/{deal_id}/process")
     assert processed.status_code == 200
     extraction = processed.json()
@@ -98,7 +123,7 @@ def test_upload_process_review_calculate_xlsx():
 
     calc = client.post(
         f"/api/deals/{deal_id}/calculate",
-        json=CalculationRequest().model_dump(),
+        json=CalculationRequest(**(settings.calculation_defaults | {"area_m2": 1200})).model_dump(),
     )
     assert calc.status_code == 200
     assert calc.json()["decision"] in {"BID", "BID WITH CONDITIONS", "NO BID"}

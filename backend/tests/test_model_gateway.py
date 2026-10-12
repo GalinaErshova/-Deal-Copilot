@@ -93,10 +93,13 @@ def test_ollama_provider_sends_schema_and_validates_result(monkeypatch):
     assert sent["payload"]["stream"] is False
 
 
-def test_mock_gateway_returns_valid_schema():
+def test_mock_gateway_returns_valid_schema(monkeypatch):
     from app.model_gateway import MockProvider
     from app.schemas import DealExtraction
 
+    monkeypatch.setattr(settings, "mock_extraction_payload", json.dumps(
+        {"fields": [{"key": "area_m2", "label": "Площадь", "value": "1200"}]},
+    ))
     provider = MockProvider()
     result = provider.structured(
         model="mock",

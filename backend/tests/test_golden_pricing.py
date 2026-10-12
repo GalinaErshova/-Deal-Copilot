@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
+
 from app.pricing import calculate
 from app.schemas import CalculationRequest
+
 
 def test_golden_pricing_case_001():
     path = Path(__file__).parent / "golden" / "pricing_case_001.json"

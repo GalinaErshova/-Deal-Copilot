@@ -13,3 +13,7 @@ backend/data/uploads/*
 backend/deal_copilot_api.egg-info/
 .local-model/
 .DS_Store
+frontend/test-results/
+frontend/playwright-report/
+frontend/tests/fixtures/
+*.tsbuildinfo
