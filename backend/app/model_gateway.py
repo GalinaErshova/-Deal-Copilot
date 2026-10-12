@@ -62,6 +62,7 @@ class OllamaProvider(ModelProvider):
                 {"role": "user", "content": user},
             ],
             "format": schema.model_json_schema(),
+            "options": {"num_ctx": settings.ollama_num_ctx},
             "stream": False,
         }).encode("utf-8")
         request = Request(
@@ -107,13 +108,20 @@ class ModelGateway:
             return "mock"
         return f"{settings.llm_provider}:default"
 
+    def active_code(self, db: Session) -> str:
+        """Возвращает код выбранного профиля, даже если его уже убрали из настроек."""
+        selected = db.get(RuntimeModelSelection, 1)
+        return selected.profile_code if selected else self.default_code()
+
+    def configured_active_profile(self, db: Session) -> ModelProfile | None:
+        """Возвращает активный профиль или None, если он больше не настроен."""
+        return self.profiles().get(self.active_code(db))
+
     def active_profile(self, db: Session) -> ModelProfile:
         """Читает текущий профиль при каждом запросе, включая смену другим процессом API."""
-        selected = db.get(RuntimeModelSelection, 1)
-        code = selected.profile_code if selected else self.default_code()
-        profile = self.profiles().get(code)
+        profile = self.configured_active_profile(db)
         if profile is None:
-            raise ValueError(f"Model profile {code!r} is no longer configured")
+            raise ValueError(f"Model profile {self.active_code(db)!r} is no longer configured")
         return profile
 
     def select_profile(self, db: Session, code: str) -> ModelProfile:

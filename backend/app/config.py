@@ -5,6 +5,9 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+# Осторожная оценка для русского текста и запас на инструкцию, схему и ответ модели.
+OLLAMA_CHARS_PER_TOKEN = 2
+OLLAMA_CONTEXT_RESERVE_TOKENS = 6144
 
 
 class Settings(BaseSettings):
@@ -19,8 +22,11 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     # Допустимые локальные модели задаются владельцем экземпляра, а не запросом браузера.
     ollama_base_url: str = ""
-    ollama_models: str = ""
+    # Своё имя переменной: OLLAMA_MODELS сама Ollama читает как путь к каталогу моделей.
+    deal_copilot_ollama_models: str = ""
     ollama_timeout_seconds: int = 120
+    # Размер контекста Ollama в токенах; без него Ollama молча обрезает начало запроса.
+    ollama_num_ctx: int = 16384
     model_admin_token: str = ""
 
     # Runtime and document-processing limits.
@@ -126,6 +132,7 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
             "max_extraction_chars": self.max_extraction_chars,
             "llm_input_chunk_chars": self.llm_input_chunk_chars,
             "ollama_timeout_seconds": self.ollama_timeout_seconds,
+            "ollama_num_ctx": self.ollama_num_ctx,
         }
         if any(value <= 0 for value in positive_values.values()):
             raise ValueError("Runtime limits and work schedule settings must be positive")
@@ -158,7 +165,12 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
         if self.llm_provider not in {"mimo", "local", "mock"}:
             raise ValueError("llm_provider must be one of the configured providers")
         if self.parsed_ollama_models and not self.ollama_base_url:
-            raise ValueError("ollama_base_url is required when ollama_models are configured")
+            raise ValueError("ollama_base_url is required when deal_copilot_ollama_models are configured")
+        if self.parsed_ollama_models and self.ollama_num_ctx < self.required_ollama_num_ctx:
+            raise ValueError(
+                f"ollama_num_ctx must be at least {self.required_ollama_num_ctx} "
+                "tokens for the configured llm_input_chunk_chars",
+            )
         if self.ollama_base_url and not self.ollama_base_url.startswith(("http://", "https://")):
             raise ValueError("ollama_base_url must be an HTTP URL")
         if self.model_admin_token and len(self.model_admin_token) < 32:
@@ -243,7 +255,16 @@ payment_delay_days, required_staff, sanitary_supplies_provider."""
     @property
     def parsed_ollama_models(self) -> tuple[str, ...]:
         """Возвращает разрешённые имена моделей Ollama без пустых и повторных значений."""
-        return tuple(dict.fromkeys(name.strip() for name in self.ollama_models.split(",") if name.strip()))
+        return tuple(dict.fromkeys(name.strip() for name in self.deal_copilot_ollama_models.split(",") if name.strip()))
+
+    @property
+    def required_ollama_num_ctx(self) -> int:
+        """Оценивает контекст, в который помещаются фрагмент документа, инструкция и ответ.
+
+        Русский текст занимает в токенизаторах локальных моделей примерно токен на два
+        символа; запас покрывает системную инструкцию, JSON-схему и ответ модели.
+        """
+        return -(-self.llm_input_chunk_chars // OLLAMA_CHARS_PER_TOKEN) + OLLAMA_CONTEXT_RESERVE_TOKENS
 
     @property
     def parsed_extraction_confidence_label_map(self) -> dict[str, float]:

@@ -31,7 +31,7 @@ export default defineConfig({
       env: {
         DEMO_MODE: "true",
         LLM_PROVIDER: "mock",
-        OLLAMA_MODELS: "",
+        DEAL_COPILOT_OLLAMA_MODELS: "",
         DATABASE_URL: `sqlite:///${path.join(e2eData, "e2e.db").split(path.sep).join("/")}`,
         DATA_DIR: e2eData,
         UPLOAD_DIR: path.join(e2eData, "uploads"),
