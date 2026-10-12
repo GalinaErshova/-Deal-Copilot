@@ -1,0 +1,33 @@
+{
+  "id": "tenderguru_41290114",
+  "title": "Уборка помещений административных, генеральная, комплексная",
+  "source_url": "https://www.tenderguru.ru/tender/41290114",
+  "case_type": "internal_cleaning",
+  "complexity": "simple",
+  "known_facts": {
+    "area_m2": 7077.2,
+    "unit_price_rub_per_m2": 166,
+    "total_rub": 1174815
+  },
+  "expected_files": [
+    "Тех.задание.docx",
+    "Обоснование нмц.xlsx",
+    "Проект договора.doc",
+    "Информационная карта ЭA.docx"
+  ],
+  "demo_goals": [
+    "PDF/DOCX/XLSX parsing",
+    "area extraction",
+    "price/NMCK extraction",
+    "contract-term extraction",
+    "source traceability"
+  ],
+  "expected_key_fields": [
+    "area_m2",
+    "schedule",
+    "contract_months",
+    "payment_delay_days",
+    "price_or_nmck"
+  ],
+  "notes": "Простой baseline-case для первого реального demo-run."
+}

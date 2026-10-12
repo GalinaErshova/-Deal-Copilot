@@ -91,3 +91,19 @@ def test_ollama_provider_sends_schema_and_validates_result(monkeypatch):
         {"role": "user", "content": "Document"},
     ]
     assert sent["payload"]["stream"] is False
+
+
+def test_mock_gateway_returns_valid_schema():
+    from app.model_gateway import MockProvider
+    from app.schemas import DealExtraction
+
+    provider = MockProvider()
+    result = provider.structured(
+        model="mock",
+        system="test",
+        user="test",
+        schema=DealExtraction,
+    )
+    assert isinstance(result, DealExtraction)
+    assert result.fields
+    assert all(field.key for field in result.fields)
