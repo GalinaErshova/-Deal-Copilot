@@ -361,17 +361,32 @@ export default function Home(){
     return sourceArrow(source?.document_id,source?.source_location,`Открыть источник: ${label}`,source?`${source.document_name} · ${source.source_fragment}`:label);
   }
   async function saveField(row:Field,value:string){
-    await req("/fields/"+row.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:value,confirmed:true})});
-    if(row.key==="area_m2"){
-      const numeric=Number(String(value).replace(",",".").replace(/[^0-9.\-]/g,""));
-      if(Number.isFinite(numeric) && numeric>0) setForm(current=>current?({...current,area_m2:numeric}):current);
-    }
-    if(row.key==="contract_months"){
-      const months=Number(String(value).replace(",","."));
-      if(Number.isInteger(months)&&months>0)setForm(current=>current?({...current,contract_months:months}):current);
-    }
-    setCalculationConfirmed(false);setCalculationDirty(true);
-    await refresh();
+    setBusy(true);
+    try{
+      await req("/fields/"+row.id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({value:value,confirmed:false})});
+      if(row.key==="area_m2"){
+        const numeric=Number(String(value).replace(",",".").replace(/[^0-9.\-]/g,""));
+        if(Number.isFinite(numeric) && numeric>0) setForm(current=>current?({...current,area_m2:numeric}):current);
+      }
+      if(row.key==="contract_months"){
+        const months=Number(String(value).replace(",","."));
+        if(Number.isInteger(months)&&months>0)setForm(current=>current?({...current,contract_months:months}):current);
+      }
+      setCalculationConfirmed(false);setCalculationDirty(true);
+      await refresh();
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
+  async function confirmRequirements(){
+    if(!deal)return;
+    setBusy(true);setError("");
+    try{
+      await req("/deals/"+deal.id+"/fields/confirm",{method:"POST"});
+      const area=Number(String(areaField?.value||"").replace(",","."));
+      const months=Number(fields.find(field=>field.key==="contract_months")?.value);
+      setForm(current=>current?({...current,area_m2:area,...(Number.isInteger(months)&&months>0?{contract_months:months}:{})}):current);
+      setCalculationConfirmed(false);setCalculationDirty(true);
+      await refresh();
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
   }
   async function calculate(){
     if(!deal||!form)return;
@@ -564,17 +579,29 @@ export default function Home(){
   const formulaTab={key:"settings",label:"Настройки",title:"Настройки компании",description:"Прайс-лист услуг и формулы расчёта."};
   const currentTab=tabs.find(tab=>tab.key===active)??(active==="deals"?{key:"deals",title:"Сделки",description:"Откройте сохранённую сделку, измените её название или удалите запись."}:active==="pipeline"?serviceTab:active==="settings"?formulaTab:tabs[0]);
   const stageIndex=tabs.findIndex(tab=>tab.key===active);
-  const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next)setActive(next.key)};
+  const moveStage=(offset:number)=>{const next=tabs[Math.max(0,Math.min(tabs.length-1,stageIndex+offset))];if(next&&(offset<0||tabs.indexOf(next)<=2||requirementsConfirmed))setActive(next.key)};
   const productivityHelpNumbers=productivityHelp?productivityEstimate(productivityHelp,appSettings,form?.monthly_hours_per_fte??0):null;
   const confirmed=fields.filter(x=>x.confirmed).length;
   const areaField=fields.find(x=>x.key==="area_m2");
+  const requirementsConfirmed=fields.length>0&&confirmed===fields.length&&Boolean(areaField?.value);
+  useEffect(()=>{
+    if(fields.length&&!requirementsConfirmed&&["workforce","economics","proposal"].includes(active))setActive("review");
+  },[fields,requirementsConfirmed,active]);
+  useEffect(()=>{
+    if(!requirementsConfirmed)return;
+    const area=Number(String(areaField?.value||"").replace(",","."));
+    const months=Number(fields.find(field=>field.key==="contract_months")?.value);
+    if(Number.isFinite(area)&&area>0)setForm(current=>current?{
+      ...current,area_m2:area,...(Number.isInteger(months)&&months>0?{contract_months:months}:{}),
+    }:current);
+  },[fields,requirementsConfirmed,areaField?.value]);
   const proposalContractMonths=form?.contract_months||1;
   const areaBreakdownReady=areaComponents.length>0&&areaComponents.every(component=>Boolean(
     component.curation_status==="verified"&&component.schedule_status!=="needs_review"&&component.area_m2>0
     &&(component.productivity_m2_per_shift||0)>0
     &&((shiftsForMode(component.schedule_mode,appSettings)??component.shifts_per_month)||0)>0
   ));
-  const calculationInputsReady=Boolean(form&&(areaComponents.length?areaBreakdownReady:areaField?.confirmed&&areaField.value));
+  const calculationInputsReady=Boolean(form&&requirementsConfirmed&&(areaComponents.length?areaBreakdownReady:areaField?.value));
   const criticalReady=Boolean(calculationInputsReady&&calculationConfirmed);
   const statusClass=calc?.decision==="BID"?"good":calc?.decision==="NO BID"?"bad":"warn";
   const visibleDeals=deals.filter(item=>!dealSearch.trim()||`${visibleDealTitle(item,deals)} ${item.id} ${item.title} ${dealStageLabel(item)}`.toLocaleLowerCase("ru-RU").includes(dealSearch.trim().toLocaleLowerCase("ru-RU")));
@@ -609,7 +636,7 @@ export default function Home(){
 
       <nav className="sideNav" aria-label="Рабочие разделы">
         <span className="sidebarLabel">РАБОЧИЙ ПРОЦЕСС</span>
-        {tabs.map((tab,index)=><button key={tab.key} className={active===tab.key?"active":""} aria-current={active===tab.key?"page":undefined} onClick={()=>setActive(tab.key)}>
+        {tabs.map((tab,index)=><button key={tab.key} className={active===tab.key?"active":""} aria-current={active===tab.key?"page":undefined} disabled={index>2&&!requirementsConfirmed} onClick={()=>setActive(tab.key)}>
           <span className="navIndex">{String(index+1).padStart(2,"0")}</span><span>{tab.label}</span><span className="navArrow" aria-hidden="true">→</span>
         </button>)}
       </nav>
@@ -705,14 +732,14 @@ export default function Home(){
 
     {active==="review"&&<section className="panel">
       <div className="sectionHead">
-        <div><h2>Карточка требований</h2><p className="muted">Поля проверяются по источнику и подтверждаются пользователем.</p></div>
-        <button onClick={()=>setActive("workforce")}>Настроить расчёт →</button>
+        <div><h2>Карточка требований</h2><p className="muted">Проверьте поля по источникам и подтвердите требования сделки целиком.</p></div>
+        <button disabled={!requirementsConfirmed} onClick={()=>setActive("workforce")}>Настроить расчёт →</button>
       </div>
       <div className="fields">
         {!areaField&&<div className="field">
           <div className="fieldMeta"><b>Площадь объекта, м²</b><span className="confidence warn">Источник не найден</span></div>
           <div className="fieldInput"><input type="number" min="0" step="any" value={manualArea} onChange={e=>setManualArea(e.target.value)} placeholder="Введите площадь вручную"/><span>м²</span><button disabled={busy||!manualArea} onClick={addManualArea}>Добавить на подтверждение</button></div>
-          <p className="muted">Расчёт станет доступен после отдельного подтверждения этого значения.</p>
+          <p className="muted">После добавления площади проверьте её и подтвердите требования сделки.</p>
         </div>}
         {fields.map(f=><div className="field" key={f.id}>
           <div className="fieldMeta"><b>{f.label}</b><span className={"confidence "+(appSettings&&((f.confidence||0)>appSettings.confidence_good_threshold)?"good":"warn")}>{f.confidence?(appSettings?Math.round(f.confidence*appSettings.display_percentage_factor)+"%":f.confidence):"—"}</span></div>
@@ -720,11 +747,11 @@ export default function Home(){
             <input defaultValue={f.value||""} onBlur={e=>{if(e.target.value!==f.value)saveField(f,e.target.value)}}/>
             <span>{f.unit}</span>
             {sourceArrow(f.source_document_id,f.source_location,`Открыть источник для поля «${f.label}»`,docs.find(doc=>doc.id===f.source_document_id)?.filename)}
-            <button className={f.confirmed?"confirmed":""} onClick={()=>saveField(f,f.value||"")}>{f.confirmed?"✓ Подтверждено":"Подтвердить"}</button>
           </div>
           <details><summary>Цитата в документе</summary><p className="sourceReference"><b>{f.source_document_id?<button type="button" className="sourceFileLink" onClick={()=>void openDoc(f.source_document_id!,f.source_location||undefined)}>{docs.find(doc=>doc.id===f.source_document_id)?.filename||"Открыть документ"}</button>:"Документ не указан"}</b><span>{sourceLocationLabel(f.source_location,docs.find(doc=>doc.id===f.source_document_id)?.parser)}</span></p><blockquote>{evidenceText(fullEvidenceQuote(f.source_document_id?sourceParsed[f.source_document_id]:undefined,f.source_location,f.source_fragment),f.source_fragment?[f.source_fragment]:[])}</blockquote></details>
         </div>)}
       </div>
+      <button type="button" className="primary" disabled={busy||requirementsConfirmed||!areaField||!fields.length} onClick={()=>void confirmRequirements()}>{requirementsConfirmed?"✓ Требования подтверждены":"Подтвердить требования"}</button>
       <div className="manualServices">
         <div><h3>Требуемые услуги</h3><p className="muted">Выберите услугу из прайс-листа компании: её вид работ, тариф и норматив подставятся в строку. Площадь и адрес заполните для этой сделки. Цена и норматив останутся редактируемыми.</p></div>
         {areaComponents.map(component=><div className="manualServiceRow" key={component.id}>
@@ -945,7 +972,7 @@ export default function Home(){
         {active!=="pipeline"&&active!=="settings"&&<nav className="stageNav" aria-label="Переход между этапами">
           <button type="button" onClick={()=>moveStage(-1)} disabled={stageIndex<=0}>← Назад</button>
           <span>Этап {stageIndex+1} из {tabs.length}</span>
-          <button type="button" className="primary" onClick={()=>moveStage(1)} disabled={stageIndex>=tabs.length-1}>Далее →</button>
+          <button type="button" className="primary" onClick={()=>moveStage(1)} disabled={stageIndex>=tabs.length-1||(stageIndex===2&&!requirementsConfirmed)}>Далее →</button>
         </nav>}
       </div>
       {productivityHelp&&<div className="modalBackdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setProductivityHelp(null)}}>

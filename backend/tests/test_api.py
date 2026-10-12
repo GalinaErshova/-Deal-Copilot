@@ -43,6 +43,22 @@ def test_calculation_requires_confirmed_area_and_matching_value():
     assert response.json()["decision"] in {"BID", "BID WITH CONDITIONS", "NO BID"}
 
 
+def test_requirements_are_confirmed_together_and_edit_resets_approval():
+    deal_id=create_deal()
+    defaults=settings.calculation_defaults
+    first=client.post(f"/api/deals/{deal_id}/fields/area",json={"value":defaults["area_m2"]})
+    second=client.post(f"/api/deals/{deal_id}/fields/area",json={"value":defaults["area_m2"]})
+    assert first.status_code==200 and second.status_code==200
+    response=client.post(f"/api/deals/{deal_id}/fields/confirm")
+    assert response.status_code==200
+    assert response.json()["confirmed_count"]==2
+    assert all(field["confirmed"] for field in client.get(f"/api/deals/{deal_id}/fields").json())
+
+    changed=client.patch(f"/api/fields/{first.json()['id']}",json={"value":defaults["area_m2"]+1})
+    assert changed.status_code==200
+    assert not any(field["confirmed"] for field in client.get(f"/api/deals/{deal_id}/fields").json())
+
+
 def test_calculation_rejects_invalid_numeric_input():
     deal_id = create_deal()
     defaults = settings.calculation_defaults
