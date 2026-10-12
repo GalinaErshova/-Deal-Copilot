@@ -15,6 +15,51 @@ def create_deal() -> int:
     return response.json()["id"]
 
 
+def test_delete_document_removes_only_its_file_and_stale_extraction():
+    import json
+
+    from app.db import SessionLocal
+    from app.main import _calculation_source_fingerprint
+    from app.models import Calculation, Deal, Document, ExtractedField
+
+    deal_id = create_deal()
+    other_deal_id = create_deal()
+    uploads = client.post(f"/api/deals/{deal_id}/documents", files=[
+        ("files", ("first.txt", b"first", "text/plain")),
+        ("files", ("second.txt", b"second", "text/plain")),
+    ])
+    assert uploads.status_code == 200
+    first_id, second_id = [item["id"] for item in uploads.json()["documents"]]
+    with SessionLocal() as db:
+        path = settings.resolve_path(db.get(Document, first_id).file_path)
+        db.add_all([
+            ExtractedField(deal_id=deal_id, key="first", label="First", value="1",
+                           status="user_confirmed", source_document_id=first_id),
+            ExtractedField(deal_id=deal_id, key="unsourced", label="Unsourced", value="2",
+                           status="source_unverified"),
+            ExtractedField(deal_id=deal_id, key="manual", label="Manual", value="3",
+                           status="manual_unverified"),
+        ])
+        db.commit()
+        db.add(Calculation(deal_id=deal_id, input_json="{}",
+                           output_json=json.dumps({"source_fingerprint":
+                                                   _calculation_source_fingerprint(db, deal_id)}),
+                           decision="BID"))
+        db.get(Deal, deal_id).status = "calculated"
+        db.commit()
+    assert client.get(f"/api/deals/{deal_id}/calculations").json()[0]["is_current"] is True
+    assert path.exists()
+    assert client.delete(f"/api/deals/{other_deal_id}/documents/{first_id}").status_code == 404
+    assert path.exists()
+    assert client.delete(f"/api/deals/{deal_id}/documents/{first_id}").status_code == 200
+    assert client.delete(f"/api/deals/{deal_id}/documents/{first_id}").status_code == 404
+    assert not path.exists()
+    assert [item["id"] for item in client.get(f"/api/deals/{deal_id}/documents").json()] == [second_id]
+    assert [item["key"] for item in client.get(f"/api/deals/{deal_id}/fields").json()] == ["manual"]
+    assert client.get(f"/api/deals/{deal_id}/calculations").json()[0]["is_current"] is False
+    assert next(item for item in client.get("/api/deals").json() if item["id"] == deal_id)["status"] == "draft"
+
+
 def test_settings_endpoint_exposes_public_defaults_only():
     response = client.get("/api/settings")
     assert response.status_code == 200
