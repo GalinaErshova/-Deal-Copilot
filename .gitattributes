@@ -1,0 +1,3 @@
+# Сценарии и конфигурации серверов всегда с LF: с CRLF bash и nginx их не прочитают.
+*.sh text eol=lf
+deploy/** text eol=lf
