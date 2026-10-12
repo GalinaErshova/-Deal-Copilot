@@ -1,0 +1,15 @@
+[Unit]
+Description=Ollama mini-PC (10.66.68.2:11434) для всей сети WireGuard на 10.66.66.1:11434
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+# Слушает только адрес ALEX в wg0: из интернета порт недоступен.
+ExecStart=/usr/bin/socat -d TCP-LISTEN:11434,bind=10.66.66.1,reuseaddr,fork,keepalive TCP:10.66.68.2:11434,connect-timeout=10
+Restart=always
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+# Маршрут Deal Copilot в Traefik (Dokploy). Включать после A-записи
+# deal-copilot.tools01.ru -> 5.42.101.153: скопировать в /etc/dokploy/traefik/dynamic/.
+# Пароль на весь сайт ставит nginx в контейнере deal-copilot-proxy.
+http:
+  routers:
+    deal-copilot:
+      rule: "Host(`deal-copilot.tools01.ru`)"
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-to-https@file
+      service: deal-copilot
+    deal-copilot-tls:
+      rule: "Host(`deal-copilot.tools01.ru`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - deal-copilot-zagolovki
+      service: deal-copilot
+      tls:
+        certResolver: letsencrypt
+  middlewares:
+    deal-copilot-zagolovki:
+      headers:
+        stsSeconds: 31536000
+        contentTypeNosniff: true
+        referrerPolicy: no-referrer
+  services:
+    deal-copilot:
+      loadBalancer:
+        servers:
+          - url: "http://deal-copilot-proxy:80"
