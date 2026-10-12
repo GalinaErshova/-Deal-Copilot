@@ -313,6 +313,7 @@ export default function Home(){
   }
   async function process(){
     if(!deal)return;
+    if(fields.length>0&&!window.confirm("Повторное извлечение удалит извлечённые и вручную добавленные требования этой сделки, а также их подтверждения и правки. Продолжить?"))return;
     setCalculationConfirmed(false);setCalculationDirty(true);
     setBusy(true);setError("");
     const previousRunId=Math.max(0,...runs.map(run=>run.id));

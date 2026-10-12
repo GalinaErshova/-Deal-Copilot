@@ -20,6 +20,8 @@ test("полный сценарий: загрузка → извлечение �
 
   await expect(page.getByRole("button", { name: "Свернуть документ" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Повторить извлечение" })).toBeVisible();
+  page.once("dialog", dialog => { expect(dialog.message()).toContain("вручную добавленные требования"); return dialog.dismiss(); });
+  await page.getByRole("button", { name: "Повторить извлечение" }).click();
   await page.locator(".sectionActions").getByRole("button", { name: "Далее →" }).click();
   await expect(page.getByRole("heading", { name: "Карточка требований" })).toBeVisible();
   const areaCard = page.locator(".field").filter({ hasText: "Площадь" }).first();
