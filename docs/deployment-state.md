@@ -1,6 +1,7 @@
 # Deal Copilot: состояние развёртывания
 
-Редакция от 12 октября 2026 года. Развёрнут commit `a7cf258` ветки `integration/apply-all-prs`.
+Редакция от 12 октября 2026 года, вечер. Развёрнут commit `2c5154d` ветки `main`
+(PR #5 и #6). Прежний релиз `a7cf258` оставлен для отката.
 Секреты здесь не записываются — только где они лежат.
 
 ## Схема
@@ -24,24 +25,11 @@ Ollama на mini-PC:11434. Браузер к NORDIK и mini-PC напряму�
   слушает `10.66.66.16:8020`.
 - Порт 8020 принимает только gala-msk (10.66.66.3) и локальные запросы; правила iptables
   ставит сама служба при запуске.
-- Модели в списке выбора: `qwen2.5:7b`, `qwen2.5:14b`, `llama3.1:8b`, `llama3.2:3b`,
-  `sutyrin/saiga_mistral_7b:latest`. Активная — `ollama:qwen2.5:7b`.
-
-### Перед следующим выпуском на NORDIK
-
-Ветка `fix/model-review-findings` переименовала настройку списка моделей. В
-`/etc/deal-copilot/backend.env` до перезапуска службы нужно:
-
-- переименовать `OLLAMA_MODELS` в `DEAL_COPILOT_OLLAMA_MODELS`, значение не менять. Старое
-  имя приложение больше не читает: без переименования список моделей опустеет, активный
-  профиль `ollama:qwen2.5:7b` станет ненастроенным, `/api/health` ответит `degraded`,
-  а обработка документов — 409;
-- при желании добавить `OLLAMA_NUM_CTX=16384` — это значение по умолчанию, оно вмещает
-  фрагмент `LLM_INPUT_CHUNK_CHARS=12000`.
-
-```bash
-sed -i 's/^OLLAMA_MODELS=/DEAL_COPILOT_OLLAMA_MODELS=/' /etc/deal-copilot/backend.env
-```
+- Модели в списке выбора (`DEAL_COPILOT_OLLAMA_MODELS`): `qwen2.5:14b`, `qwen2.5:7b`,
+  `qwen2.5:14b-ctx65k`, `gemma4:12b`, `gemma2:9b`, `mistral:7b`, `llama3.2:3b`, `llama2:7b`.
+  Активная — `ollama:qwen2.5:14b`. Размер контекста `OLLAMA_NUM_CTX=16384`.
+- Список должен совпадать с моделями, установленными на mini-PC. Если модель удалили
+  из Ollama, уберите её и из списка, иначе обработка этой моделью вернёт ошибку.
 
 ## gala-msk — сайт
 
@@ -53,28 +41,20 @@ sed -i 's/^OLLAMA_MODELS=/DEAL_COPILOT_OLLAMA_MODELS=/' /etc/deal-copilot/backen
 - Прокси: `/opt/deal-copilot/proxy/default.conf`. Пароль на весь сайт, `/api/admin/` → 403,
   таймаут ответа API 900 с, размер загрузки до 50 МБ.
 - Логин и пароль сайта: `/opt/deal-copilot/secrets/web-basic-auth.txt` (права 600).
-- Порт прокси: `127.0.0.1:8095` и `10.66.66.3:8095`, наружу не открыт.
+- Порт прокси: `127.0.0.1:8095` и `10.66.66.3:8095`, наружу не открыт; снаружи сайт
+  доступен только через Traefik по домену.
 
-## Как открыть сайт сейчас
+## Адрес сайта
 
-Пока нет DNS-записи, сайт открывается через SSH-туннель:
+`https://deal-copilot.tools01.ru` — HTTPS через Traefik (Dokploy), сертификат Let's Encrypt.
+Маршрут: `/etc/dokploy/traefik/dynamic/deal-copilot.yml` (копия — `/opt/deal-copilot/proxy/`).
+Вход по логину и паролю из файла выше; учётная запись одна.
+
+Запасной путь без домена — SSH-туннель, затем `http://localhost:8095`:
 
 ```bash
 ssh -N -L 8095:127.0.0.1:8095 gala
 ```
-
-Затем в браузере — `http://localhost:8095`, логин и пароль из файла выше.
-
-## Как включить HTTPS по домену
-
-1. Добавить A-запись `deal-copilot.tools01.ru` → `5.42.101.153`.
-2. Скопировать готовый маршрут Traefik:
-
-```bash
-cp /opt/deal-copilot/proxy/traefik-deal-copilot.yml /etc/dokploy/traefik/dynamic/deal-copilot.yml
-```
-
-Traefik подхватит файл сам и выпустит сертификат Let's Encrypt.
 
 ## Смена модели
 
@@ -90,21 +70,24 @@ curl -s -X PUT -H "X-Model-Admin-Token: $T" -H 'Content-Type: application/json' 
 
 | Проверка | Результат |
 |---|---|
-| `/api/health` на NORDIK | ok |
-| Список профилей без токена / с токеном | 403 / 200 |
-| Через прокси без пароля | 401 |
-| Через прокси: сайт, `/api/settings`, `/api/health` | 200 |
-| Через прокси: `/api/admin/model-profiles` | 403 |
-| Traefik → прокси | отвечает (401 без пароля) |
-| Обработка документа через `ollama:qwen2.5:7b` | успешно, 50 с; в журнале `model_profile` и `model` |
+| `/api/health` на NORDIK | ok, `model_configured: true` |
+| Список профилей без токена / с токеном | 403 / 200 |
+| `http://deal-copilot.tools01.ru` | 301 на HTTPS |
+| `https://deal-copilot.tools01.ru` без пароля / с паролем | 401 / 200 |
+| `https://deal-copilot.tools01.ru/api/admin/model-profiles` | 403 |
+| Обработка через `ollama:qwen2.5:14b` | площадь 1200, срок 12, режим найдены, источники подтверждены; 81 с |
+| Обработка через `ollama:qwen2.5:7b` | вместо чисел мусор (`a2`, `c`); поля помечены `needs_review` |
 
-Не проверено: отказ Ollama во время обработки (не останавливали Ollama на рабочей машине),
-восстановление базы из копии, вид сайта на телефоне и широком экране.
+Не проверено: отказ Ollama во время обработки, восстановление базы из копии, вид сайта
+на телефоне и широком экране.
 
 ## Откат и резервная копия
 
-- Прежней установки не было, откатываться некуда; для следующих релизов — переключить
-  ссылку `current` на прежний каталог в `releases` и перезапустить службу и контейнер.
+- Откат: переключить ссылку `current` на `/opt/deal-copilot/releases/a7cf258` на NORDIK
+  и gala-msk, вернуть `/etc/deal-copilot/backend.env` из копии, перезапустить
+  `deal-copilot-api` и `docker restart deal-copilot-web`.
+- Копии перед выпуском `2c5154d` лежат на NORDIK в `/var/backups/deal-copilot/`: база,
+  загрузки и `backend.env`.
 - Копия базы вместе с файлами, без остановки службы:
 
 ```bash
