@@ -100,3 +100,16 @@ sqlite3 /var/lib/deal-copilot/deal_copilot.db ".backup /var/backups/deal_copilot
 - Когда mini-PC выключен или Ollama не запущена, обработка документов завершается ошибкой.
   Расчёт, прайс-лист и уже извлечённые данные работают.
 - Учётных записей в приложении нет: доступ ограничивает только пароль на прокси.
+
+## Ollama для всей сети WireGuard
+
+С 12 октября 2026 года Ollama на mini-PC доступна любому участнику сети WireGuard по адресу
+`http://10.66.66.1:11434`, в том числе Telegram-ботам на серверах сети. Это служба
+`ollama-wg-forward` на ALEX: `socat` слушает только адрес ALEX в wg0 и пересылает запросы
+на mini-PC (10.66.68.2:11434). Из интернета порт недоступен.
+
+API Deal Copilot на NORDIK по-прежнему ходит к mini-PC напрямую, без ALEX.
+
+Проверено: из ALEX, NORDIK и gala-msk модель `llama3.2:3b` отвечает через `10.66.66.1:11434`.
+
+Отключить: `systemctl disable --now ollama-wg-forward` на ALEX.
