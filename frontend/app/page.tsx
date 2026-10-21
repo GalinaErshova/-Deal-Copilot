@@ -27,6 +27,8 @@ type CalculationForm={area_m2:number;service_price_per_m2_month:number;productiv
 type SavedCalculation={id:number;is_current:boolean;input:{confirmed?:boolean;assumptions?:CalculationForm;components?:Partial<AreaComponent>[]}&Partial<CalculationForm>;output:Calc&{aggregate?:Calc}};
 type AppSettings={calculation_defaults:CalculationForm;working_days_per_month:number;working_days_per_week:number;monthly_frequency_shifts:number;hours_per_shift:number;accepted_upload_extensions:string[];demo_mode:boolean;llm_provider:string|null;llm_model?:string|null;model_configured?:boolean;display_locale:string;currency_code:string;currency_unit_symbol:string;display_number_max_fraction_digits:number;display_currency_max_fraction_digits:number;display_percentage_factor:number;display_percentage_decimal_places:number;base_sensitivity_label:string;confidence_good_threshold:number;no_bid_margin_threshold:number;condition_price_decimal_places:number;condition_price_unit:string;sensitivity_bar_min_width:number;sensitivity_bar_max_width:number;sensitivity_bar_margin_offset:number;sensitivity_bar_scale:number};
 
+// Реквизиты заказчика, которые ищутся в документах; подписи — для сообщения о найденном и ненайденном.
+const ORGANIZATION_FIELDS:[string,string][]=[["customer_name","название"],["customer_address","юридический адрес"],["customer_inn","ИНН"],["customer_kpp","КПП"],["customer_ogrn","ОГРН"],["customer_contact_person","представитель"],["customer_phone","телефон"],["customer_email","почта"]];
 // Подпись активной модели: поставщик и имя берутся из /api/settings, а не задаются в интерфейсе.
 const modelLabel=(s:AppSettings|null)=>{
   if(!s) return "";
@@ -175,7 +177,10 @@ export default function Home(){
       setCalc(output?.aggregate?{...output.aggregate,calculation_id:latestCalculation.id,components:output.components,total_area_m2:output.total_area_m2,physical_staff_by_site:output.physical_staff_by_site}:{...output,calculation_id:latestCalculation.id});
       setCalculationDirty(current=>current||!latestCalculation.is_current);
       if(restoreCalculation){
-        setCalculationConfirmed(Boolean(latestCalculation.is_current&&latestCalculation.input?.confirmed));
+        // Упрощённый расчёт без строк по адресам не хранит отметку: его можно запустить только после неё,
+        // и сервер не требует её для КП. Без этого подтверждение сбрасывалось сразу после расчёта.
+        const simpleCalculation=!latestCalculation.output?.components?.length;
+        setCalculationConfirmed(Boolean(latestCalculation.is_current&&(latestCalculation.input?.confirmed||simpleCalculation)));
         if(latestCalculation.is_current){
           const assumptions=latestCalculation.input.assumptions??latestCalculation.input;
           setForm(current=>current?{...current,...assumptions}:current);
@@ -878,8 +883,11 @@ export default function Home(){
     {active==="proposal"&&<section className="panel proposalPanel">
       <div className="sectionHead"><div><h2>Коммерческое предложение</h2><p className="muted">Заполните реквизиты и скачайте редактируемый файл Word. В документ попадут подтверждённые требования и последний расчёт.</p></div></div>
        {!calc?<div className="empty">Сначала завершите и подтвердите расчёт на вкладке «Трудоёмкость».</div>:<>
-         {(calculationDirty||!calculationConfirmed)&&<p className="warning">Расчёт устарел или требует подтверждения. Проверьте данные и пересчитайте сделку перед скачиванием КП.</p>}
-        <p className="muted">Реквизиты заказчика подставлены из тендерных документов, если найдены. Стрелка рядом с полем открывает подтверждающий фрагмент; значения можно исправить вручную.</p>
+         {calculationDirty&&<p className="warning">Исходные данные изменились после расчёта. Пересчитайте сделку на вкладке «Трудоёмкость» или «Экономика», затем скачайте КП.</p>}
+         {!calculationDirty&&!calculationConfirmed&&<p className="warning">Расчёт не подтверждён. На вкладке «Трудоёмкость» отметьте «Подтверждаю расчёт целиком» и пересчитайте сделку.</p>}
+        {(()=>{const found=ORGANIZATION_FIELDS.filter(([key])=>organizationProfile[key]?.value);const missing=ORGANIZATION_FIELDS.filter(([key])=>!organizationProfile[key]?.value);
+          if(!found.length)return <p className="warning">В загруженных документах реквизиты заказчика не найдены. Заполните поля вручную: они попадут в КП как есть.</p>;
+          return <p className="muted">Из документов подставлено: {found.map(([,label])=>label).join(", ")}. Стрелка рядом с полем открывает фрагмент-источник; значения можно исправить.{missing.length?` Не найдено: ${missing.map(([,label])=>label).join(", ")} — заполните вручную.`:""}</p>;})()}
         <div className="proposalForm">
           <label>Заказчик {organizationSource("customer_name","название заказчика")}<input value={proposalForm.customer_name} onChange={e=>updateProposalField("customer_name",e.target.value)} placeholder="Название организации"/></label>
           <label>Юридический адрес {organizationSource("customer_address","адрес заказчика")}<input value={proposalForm.customer_address} onChange={e=>updateProposalField("customer_address",e.target.value)} placeholder="Адрес заказчика"/></label>

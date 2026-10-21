@@ -37,6 +37,13 @@ test("полный сценарий: загрузка → извлечение �
   await expect(page.getByText("Тариф безубыточности")).toBeVisible();
   await expect(page.locator(".decisionHero")).toContainText(/BID|NO BID/);
 
+  // После расчёта подтверждение должно сохраниться, а КП — скачиваться.
+  await page.getByRole("button", { name: /Коммерческое предложение/ }).first().click();
+  const download = page.getByRole("button", { name: "Скачать проект КП (.docx)" });
+  await expect(download).toBeEnabled();
+  const [file] = await Promise.all([page.waitForEvent("download"), download.click()]);
+  expect(file.suggestedFilename()).toMatch(/\.docx$/);
+
   await page.getByRole("button", { name: /Контроль обработки/ }).click();
   await expect(page.getByRole("heading", { name: "Пошаговый контроль обработки" })).toBeVisible();
   await expect(page.getByText(/deterministic_calculation/).first()).toBeVisible();
